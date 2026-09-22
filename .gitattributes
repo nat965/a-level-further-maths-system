@@ -1,0 +1,8 @@
+*.bat text eol=crlf
+*.command text eol=lf
+*.sh text eol=lf
+Revision[[:space:]]Tracker.app/Contents/MacOS/* text eol=lf
+*.icns binary
+*.ico binary
+*.png binary
+*.xlsx binary
