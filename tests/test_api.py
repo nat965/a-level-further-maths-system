@@ -65,10 +65,11 @@ class SeedAndChapters(ApiTestCase):
         self.assertEqual(by_strand, {"Pure": 30, "Pure Core": 17, "Statistics": 6, "Further Stats": 9,
                                      "Mechanics": 8, "Further Mechanics": 10})
         first = cs[0]
-        self.assertEqual((first["book"], first["ch_num"], first["title"], first["level"], first["terms"]),
-                         ("Maths Y1 (red)", 1, "Proof and mathematical communication", "AS", ["Autumn Y12"]))
-        two_term = next(c for c in cs if c["title"] == "Functions")
-        self.assertEqual(two_term["terms"], ["Autumn Y12", "Spring Y12"])
+        self.assertEqual((first["book"], first["ch_num"], first["title"], first["level"]),
+                         ("Maths Y1 (red)", 1, "Proof and mathematical communication", "AS"))
+        # school teaching terms are ignored; nothing is learnt or due to begin with
+        self.assertTrue(all("terms" not in c and "taught" not in c for c in cs))
+        self.assertTrue(all(c["first_learnt"] is None and not c["learnt"] and not c["due"] for c in cs))
 
     def test_update_statuses_confidence_notes(self):
         c = self.call("PATCH", "/api/chapters/3", {"summary_status": "done", "exercises_status": "in_progress",
@@ -82,6 +83,7 @@ class SeedAndChapters(ApiTestCase):
     def test_review_stamps_today_and_schedules_next(self):
         c = self.call("POST", "/api/chapters/5/review", {"confidence": 2, "note": "Ex 5A"})
         self.assertEqual(c["last_reviewed"], "2027-01-10")
+        self.assertEqual(c["first_learnt"], "2027-01-10")  # reviewing implies you've learnt it
         self.assertEqual(c["confidence"], 2)
         self.assertEqual(c["next_review"], "2027-01-17")  # confidence 2 -> 7 days
         self.assertEqual(c["days_since"], 0)
@@ -112,33 +114,55 @@ class SeedAndChapters(ApiTestCase):
 
 
 class DueList(ApiTestCase):
+    def test_learnt_today_schedules_first_review(self):
+        c = self.call("POST", "/api/chapters/12/learnt", {"confidence": 3})
+        self.assertEqual((c["first_learnt"], c["learnt"], c["confidence"]), ("2027-01-10", True, 3))
+        self.assertEqual(c["next_review"], "2027-01-24")   # 14 days from the day you learnt it
+        self.assertIsNone(c["last_reviewed"])
+        self.assertFalse(c["due"])
+        self.call("POST", "/api/chapters/12/learnt", {"confidence": 3}, expect=400)  # already learnt
+        self.call("POST", "/api/chapters/12/learnt", {"confidence": 9}, expect=400)
+        self.set_today("2027-01-24")
+        self.assertTrue(self.chapter(12)["due"])
+        self.assertEqual(self.call("GET", "/api/due")["chapters"][0]["id"], 12)
+
+    def test_backfill_first_learnt_date(self):
+        c = self.call("PATCH", "/api/chapters/6", {"first_learnt": "2026-12-01", "confidence": 4})
+        self.assertEqual((c["first_learnt"], c["next_review"], c["due"]), ("2026-12-01", "2026-12-31", True))
+        self.assertEqual(c["days_since_learnt"], 40)
+        self.call("PATCH", "/api/chapters/6", {"first_learnt": "2027-01-11"}, expect=400)  # future
+        self.call("PATCH", "/api/chapters/6", {"first_learnt": "not a date"}, expect=400)
+        # learnt but not yet rated -> due straight away so you rate it
+        c = self.call("PATCH", "/api/chapters/7", {"first_learnt": "2027-01-10"})
+        self.assertTrue(c["due"])
+        # can un-mark if there are no reviews, but not once you've reviewed it
+        self.assertFalse(self.call("PATCH", "/api/chapters/7", {"first_learnt": None})["learnt"])
+        self.call("POST", "/api/chapters/6/review", {"confidence": 4})
+        self.call("PATCH", "/api/chapters/6", {"first_learnt": None}, expect=400)
+        self.call("PATCH", "/api/chapters/6", {"first_learnt": "2027-01-10"})  # same day as review: fine
+        self.set_today("2027-01-12")
+        self.call("PATCH", "/api/chapters/6", {"first_learnt": "2027-01-11"}, expect=400)  # after 1st review
+
     def test_due_sorted_by_priority(self):
-        # Autumn Y12 ended 2026-12-18, so on 2027-01-10 its chapters are taught.
-        self.set_today("2026-12-01")
-        self.call("POST", "/api/chapters/1/review", {"confidence": 4})   # due 2026-12-31
-        self.call("POST", "/api/chapters/2/review", {"confidence": 1})   # due 2026-12-04
-        self.call("POST", "/api/chapters/3/review", {"confidence": 5})   # due 2027-01-30: not due
-        self.set_today("2027-01-10")
+        self.call("PATCH", "/api/chapters/1", {"first_learnt": "2026-11-01", "confidence": 4})  # due 12-01
+        self.call("PATCH", "/api/chapters/2", {"first_learnt": "2026-11-01", "confidence": 1})  # due 11-04
+        self.call("PATCH", "/api/chapters/3", {"first_learnt": "2027-01-01", "confidence": 5})  # not due
+        self.call("PATCH", "/api/chapters/4", {"first_learnt": "2027-01-09"})                   # unrated: due
         due = self.call("GET", "/api/due")
         ids = [c["id"] for c in due["chapters"]]
-        self.assertIn(1, ids)
-        self.assertIn(2, ids)
-        self.assertNotIn(3, ids)
-        self.assertLess(ids.index(2), ids.index(1))  # lower confidence & more overdue first
+        self.assertEqual(sorted(ids), [1, 2, 4])
+        self.assertLess(ids.index(2), ids.index(1))  # lower confidence first
         prios = [c["priority"] for c in due["chapters"]]
         self.assertEqual(prios, sorted(prios, reverse=True))
-        # taught-but-never-reviewed Autumn chapters are due too
-        self.assertIn(4, ids)
-        # Spring Y12 chapters (being taught now) aren't due without a review
-        spring = [c for c in due["chapters"] if c["terms"] == ["Spring Y12"]]
-        self.assertEqual(spring, [])
 
-    def test_suggestions_when_nothing_due(self):
-        self.set_today("2026-09-22")
-        due = self.call("GET", "/api/due")
-        self.assertEqual(due["chapters"], [])
-        self.assertEqual(len(due["suggested"]), 5)
-        self.assertTrue(all(c["taught"] == "in_progress" for c in due["suggested"]))
+    def test_next_to_learn_one_per_book(self):
+        self.call("POST", "/api/chapters/1/learnt", {"confidence": 3})
+        nxt = self.call("GET", "/api/due")["next_to_learn"]
+        self.assertEqual(len(nxt), 6)
+        self.assertEqual(len({c["book"] for c in nxt}), 6)
+        red = next(c for c in nxt if c["book"] == "Maths Y1 (red)")
+        self.assertEqual(red["ch_num"], 2)  # chapter 1 is learnt, so chapter 2 is next
+        self.assertTrue(all(not c["learnt"] for c in nxt))
 
     def test_marks_lost_feed_priority(self):
         before = self.chapter(10)["priority"]
@@ -227,10 +251,16 @@ class DashboardAndSettings(ApiTestCase):
         self.assertEqual(d["reviews_this_week"], 2)
         self.assertEqual(len(d["by_strand"]), 6)
         self.assertEqual(sum(s["chapters"] for s in d["by_strand"]), 80)
-        self.assertEqual(d["by_term"][0]["name"], "Autumn Y12")
-        self.assertEqual(d["by_term"][0]["chapters"], 30)
-        self.assertEqual(d["schedule"]["covered"], 1)
-        self.assertEqual(d["schedule"]["verdict"], "behind")
+        self.assertEqual(len(d["by_book"]), 6)
+        self.assertEqual(d["by_book"][0]["name"], "Maths Y1 (red)")
+        self.assertEqual(d["by_book"][0]["learnt"], 2)
+        self.assertEqual(sum(b["chapters"] for b in d["by_book"]), 80)
+        pace = d["pace"]
+        self.assertEqual((pace["learnt"], pace["remaining"], pace["this_week"]), (2, 78, 2))
+        self.assertEqual(pace["target"], "2028-05-17")  # defaults to the first exam
+        self.assertEqual(pace["verdict"], "behind")     # 0.5/week vs ~1.1/week needed
+        self.call("PUT", "/api/settings", {"learn_by": "2030-01-01"})
+        self.assertEqual(self.call("GET", "/api/dashboard")["pace"]["target"], "2030-01-01")
         self.assertEqual(d["weakest"][0]["id"], 1)
         self.assertLessEqual(len(d["weakest"]), 10)
         self.assertEqual(len(d["countdown"]), 7)
@@ -254,6 +284,49 @@ class DashboardAndSettings(ApiTestCase):
         self.call("PATCH", "/api/chapters/1", {"confidence": 2}, headers={"Origin": "https://evil.example"},
                   expect=403)
         self.call("PATCH", "/api/chapters/1", {"confidence": 2}, headers={"Origin": self.base})
+
+
+class Migration(unittest.TestCase):
+    """A database made by the first version (school terms, no first-learnt date) upgrades."""
+
+    def test_v1_database_upgrades(self):
+        import sqlite3
+        tmp = tempfile.mkdtemp(prefix="rt-mig-")
+        self.addCleanup(shutil.rmtree, tmp, True)
+        Store(tmp)  # build a current database, then turn it back into v1
+        con = sqlite3.connect(os.path.join(tmp, "tracker.sqlite3"))
+        con.execute("ALTER TABLE chapters DROP COLUMN first_learnt")
+        con.execute("INSERT INTO reviews (chapter_id, reviewed_on, confidence_before, confidence_after, note,"
+                    " created_at) VALUES (3, '2026-10-01', NULL, 2, '', 'x'), (3, '2026-10-09', 2, 3, '', 'x')")
+        con.execute("INSERT INTO settings VALUES ('priority_weights', ?)",
+                    (json.dumps({"confidence": 40, "overdue": 20, "marks": 30, "taught": 10}),))
+        con.execute("INSERT INTO settings VALUES ('terms', '[]')")
+        con.execute("UPDATE meta SET value = '1' WHERE key = 'schema_version'")
+        con.commit()
+        con.close()
+        store = Store(tmp)
+        chapters = {c["id"]: c for c in service.list_chapters(store, date(2027, 1, 10))}
+        self.assertEqual(chapters[3]["first_learnt"], "2026-10-01")  # from its first review
+        self.assertIsNone(chapters[4]["first_learnt"])
+        s = store.settings()
+        self.assertEqual(s["priority_weights"], {"confidence": 40, "overdue": 20, "marks": 30, "learnt": 10})
+        self.assertNotIn("terms", s)
+
+    def test_old_export_imports(self):
+        tmp = tempfile.mkdtemp(prefix="rt-mig-")
+        self.addCleanup(shutil.rmtree, tmp, True)
+        store = Store(tmp)
+        data = store.export_json()
+        for c in data["tables"]["chapters"]:
+            del c["first_learnt"]
+        data["tables"]["reviews"] = [{"id": 1, "chapter_id": 9, "reviewed_on": "2026-11-11", "confidence_before": None,
+                                      "confidence_after": 2, "note": "", "created_at": "x"}]
+        data["tables"]["settings"] = [{"key": "priority_weights", "value": json.dumps(
+            {"confidence": 35, "overdue": 25, "marks": 25, "taught": 15})}]
+        store.import_json(data)
+        c = service.get_chapter(store, 9, date(2027, 1, 10))
+        self.assertEqual((c["first_learnt"], c["learnt"]), ("2026-11-11", True))
+        self.assertIn("learnt", store.settings()["priority_weights"])
 
 
 class BackupExportImport(ApiTestCase):

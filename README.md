@@ -2,7 +2,7 @@
 
 A desktop revision tracker for **OCR A-level Maths (H240)** and **OCR A Further Maths (H245: Further Statistics + Further Mechanics)**. It runs entirely on your own computer, opens in its own window, and keeps all your data in one local file.
 
-It comes pre-loaded with your 80 chapters (6 textbooks). Each has its strand, book, chapter number, sections, level (AS/A) and the term school teaches it.
+It comes pre-loaded with your 80 chapters (6 textbooks). Each has its strand, book, chapter number, sections and level (AS/A). Everything is scheduled around **when you first learnt each chapter**, not a school timetable.
 
 ---
 
@@ -56,14 +56,16 @@ From then on: **double-click the "Revision Tracker" shortcut**. You can also dou
 
 | Page | What it's for |
 |---|---|
-| **Due today** (home) | Chapters whose review date has arrived, plus mistake retests that are due, sorted by **priority**. When nothing is due, it suggests where to start. |
-| **Chapters** | All 80 chapters. Filter by strand, book, term or status; search; click any column header to sort. Set Summary / Exercises / Exam Qs status and confidence inline. Click a title for its **review history timeline**. |
-| **Dashboard** | Progress by strand and term, **ahead/behind school**, top 10 weakest chapters, review streak and reviews this week, paper averages vs A*, and exam countdown. |
+| **Due today** (home) | Chapters whose review date has arrived, plus mistake retests that are due, sorted by **priority**. Below that, **Next to learn** shows the first chapter you haven't learnt yet in each book. |
+| **Chapters** | All 80 chapters. Filter by strand, book or status (e.g. learnt / not learnt yet); search; click any column header to sort. Set Summary / Exercises / Exam Qs status and confidence inline. Click a title for its **history timeline** and to set or change its **first learnt** date. |
+| **Dashboard** | Progress by strand and by book, your **learning pace** (ahead or behind), top 10 weakest chapters, review streak and reviews this week, paper averages vs A*, and exam countdown. |
 | **Past papers** | Log attempts (paper, series, date, mark, time) and the **questions you dropped marks on** (chapter, marks lost, error type, fix). Shows a chart of % over time per paper with the A* line, and your grade boundaries. |
 | **Mistakes** | Date is added automatically. Log chapter, source, what went wrong and the correct method, with a **retest date** that feeds the due list. Tick "passed" when you've got it right. |
-| **Settings** | Review intervals, priority weights, exam dates, term dates, paper max marks, theme, and your data. |
+| **Settings** | Review intervals, priority weights, exam dates, learn-everything-by date, paper max marks, theme, and your data. |
 
-**Reviewed today** is on every chapter. It stamps today's date and logs the review in the chapter's history. It also asks for your new confidence (1–5) and shows when the next review will be. You never type a review date. If you log one by mistake, use *Undo* in the chapter's history.
+**Learnt today** (★) appears on chapters you haven't learnt yet. It stamps today as the date you first learnt the chapter and asks for your confidence, which schedules the first review. For chapters you learnt before using the app, pick the date in the chapter's panel instead. Reviewing a chapter you haven't marked as learnt also marks it as learnt that day.
+
+**Reviewed today** is on every learnt chapter. It stamps today's date and logs the review in the chapter's history. It also asks for your new confidence (1–5) and shows when the next review will be. You never type a review date. If you log one by mistake, use *Undo* in the chapter's history.
 
 ### Keyboard shortcuts (press `?` in the app)
 
@@ -71,6 +73,7 @@ From then on: **double-click the "Revision Tracker" shortcut**. You can also dou
 |---|---|
 | `1`–`6` | Due / Chapters / Dashboard / Papers / Mistakes / Settings |
 | `j` `k` (or ↓ ↑) | Move selection |
+| `l` | Learnt today for the selected chapter |
 | `r` | Reviewed today for the selected chapter |
 | `1`–`5`, then `Enter` | Set confidence in the review dialog |
 | `Enter` / `o` | Open chapter history |
@@ -83,22 +86,24 @@ From then on: **double-click the "Revision Tracker" shortcut**. You can also dou
 
 ## How the numbers work
 
-**Next review** = last review date + interval for your current confidence. The defaults are 1 → 3 days, 2 → 7, 3 → 14, 4 → 30, 5 → 60; you can change them in Settings.
+**Next review** = last review date (or, if you haven't reviewed it yet, the date you first learnt it) + interval for your current confidence. The defaults are 1 → 3 days, 2 → 7, 3 → 14, 4 → 30, 5 → 60; you can change them in Settings.
 
-**Due** means one of two things:
-- the next review date is today or earlier, or
-- school has finished teaching the chapter and you've never reviewed it.
+**Due** means you've learnt the chapter and either:
+- its next review date is today or earlier, or
+- you haven't rated your confidence yet (so it can be scheduled).
+
+Chapters you haven't learnt yet are never due.
 
 **Priority score (0–100)** is a weighted mix of four parts. The weights can be changed in Settings.
 
 | Part | Default weight | 0 → 1 |
 |---|---|---|
 | Low confidence | 35 | confidence 5 → 0 … confidence 1 (or unrated) → 1 |
-| How overdue | 25 | days past the review date ÷ that interval, capped at 1. A chapter that's been taught but never reviewed counts as 1. |
+| How overdue | 25 | days past the review date ÷ that interval, capped at 1. A learnt chapter with no confidence rating counts as 1. |
 | Marks lost in papers | 25 | *m* / (*m* + 8): 8 marks lost → 0.5, rising towards 1 |
-| Taught by school | 15 | term finished → 1, term running → 0.5, not started → 0 |
+| Learnt yet | 15 | learnt → 1, not learnt yet → 0 |
 
-**Ahead/behind school:** a chapter counts as *covered* when its **Exercises** status is *Done*. *Expected* is how many chapters school should have finished by today. Finished terms count in full and the current term is pro-rated by how far through it you are. The difference is shown per term and overall.
+**Learning pace:** your pace is the number of chapters you first learnt in the last 4 weeks, per week. The pace needed is the chapters left divided by the weeks until your *learn everything by* date (set in Settings; blank means your first exam). You're **ahead** if your pace is at least 10% above what's needed, **behind** if it's more than 10% below, and **on track** in between. The projected finish date assumes you keep your current pace.
 
 **Grades** come only from boundaries you enter for that paper and series. Nothing is pre-filled. The A* line on each chart is the average A* boundary (as a %) across the series you've entered for that paper.
 
@@ -106,10 +111,9 @@ From then on: **double-click the "Revision Tracker" shortcut**. You can also dou
 
 ## Assumptions (all editable in Settings)
 
-- **Term dates** are estimates from typical English school calendars. Autumn Y12 2 Sep–18 Dec 2026, Spring Y12 4 Jan–26 Mar 2027, Summer Y12 12 Apr–21 Jul 2027, Autumn Y13 1 Sep–17 Dec 2027, Spring Y13 4 Jan–7 Apr 2028. Set them to your school's dates.
 - **Exam dates** are placeholders marked *est.* until OCR publishes the June 2028 timetable. Tick *confirmed* once you have the real dates.
 - **Max marks:** H240/01, /02 and /03 are 100 marks each (checked against the OCR H240 specification). Y540–Y543 default to 75; check this against the H245 specification.
-- A chapter taught across two terms (e.g. *Autumn Y12 & Spring Y12*) counts as taught once the **later** term ends. It appears under both terms in the progress tables.
+- The school teaching term from your spreadsheet is kept in the data file (and in exports) but isn't used anywhere.
 
 ---
 

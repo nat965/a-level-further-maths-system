@@ -1,4 +1,4 @@
-"""Unit tests for the date, spaced-repetition, schedule and priority calculations."""
+"""Unit tests for the date, spaced-repetition, learning-pace and priority calculations."""
 import copy
 import unittest
 from datetime import date, timedelta
@@ -7,7 +7,6 @@ from revision_tracker import logic
 
 S = copy.deepcopy(logic.DEFAULT_SETTINGS)
 IV = S["intervals"]
-TERMS = S["terms"]
 D = date.fromisoformat
 
 
@@ -46,101 +45,112 @@ class DaysAndIntervals(unittest.TestCase):
         self.assertEqual(logic.next_review("2026-09-22", 3, custom), D("2026-09-26"))
 
 
-class Schedule(unittest.TestCase):
-    def test_taught_status_single_term(self):
-        t = ["Autumn Y12"]
-        self.assertEqual(logic.taught_status(t, TERMS, D("2026-08-30")), "not_yet")
-        self.assertEqual(logic.taught_status(t, TERMS, D("2026-09-02")), "in_progress")
-        self.assertEqual(logic.taught_status(t, TERMS, D("2026-12-18")), "in_progress")  # last day of term
-        self.assertEqual(logic.taught_status(t, TERMS, D("2026-12-19")), "taught")
+class FirstLearnt(unittest.TestCase):
+    def test_anchor_is_last_review_else_first_learnt(self):
+        self.assertEqual(logic.schedule_anchor("2026-10-05", "2026-09-20"), D("2026-10-05"))
+        self.assertEqual(logic.schedule_anchor(None, "2026-09-20"), D("2026-09-20"))
+        self.assertIsNone(logic.schedule_anchor(None, None))
 
-    def test_taught_status_two_terms_uses_last_term(self):
-        t = ["Autumn Y12", "Spring Y12"]
-        self.assertEqual(logic.taught_status(t, TERMS, D("2026-12-25")), "in_progress")  # holiday between terms
-        self.assertEqual(logic.taught_status(t, TERMS, D("2027-03-27")), "taught")
+    def test_first_review_counts_from_first_learnt(self):
+        anchor = logic.schedule_anchor(None, "2026-09-20")
+        self.assertEqual(logic.next_review(anchor, 2, IV), D("2026-09-27"))
 
-    def test_unknown_term_is_not_yet(self):
-        self.assertEqual(logic.taught_status(["Summer Y13"], TERMS, D("2028-06-01")), "not_yet")
 
-    def test_expected_fraction_pro_rates_current_term(self):
-        t = ["Autumn Y12"]  # 2026-09-02 .. 2026-12-18 = 107 days
-        self.assertEqual(logic.expected_fraction(t, TERMS, D("2026-09-01")), 0.0)
-        self.assertAlmostEqual(logic.expected_fraction(t, TERMS, D("2026-10-01")), 29 / 107)
-        self.assertEqual(logic.expected_fraction(t, TERMS, D("2026-12-18")), 1.0)
+class LearningPace(unittest.TestCase):
+    today = D("2026-10-31")
+    target = D("2028-05-17")
 
-    def test_schedule_position_ahead_behind(self):
-        chapters = [{"terms": ["Autumn Y12"], "exercises_status": "done"} for _ in range(3)] + \
-                   [{"terms": ["Autumn Y12"], "exercises_status": "not_started"} for _ in range(7)] + \
-                   [{"terms": ["Spring Y12"], "exercises_status": "done"}]
-        # Just after Autumn Y12 ends: school expects all 10 Autumn chapters, you've done 4.
-        pos = logic.schedule_position(chapters, TERMS, D("2026-12-20"))
-        self.assertEqual(pos["expected"], 10.0)
-        self.assertEqual(pos["covered"], 4)
-        self.assertEqual(pos["diff"], -6.0)
-        self.assertEqual(pos["verdict"], "behind")
-        autumn = next(t for t in pos["per_term"] if t["term"] == "Autumn Y12")
-        self.assertEqual((autumn["state"], autumn["chapters"], autumn["covered"]), ("finished", 10, 3))
-        spring = next(t for t in pos["per_term"] if t["term"] == "Spring Y12")
-        self.assertEqual((spring["state"], spring["expected"], spring["diff"]), ("upcoming", 0.0, 1.0))
+    def test_counts_and_recent_pace(self):
+        dates = ["2026-09-10", "2026-10-05", "2026-10-20", "2026-10-30", None, None]
+        p = logic.learning_pace(dates, self.today, self.target)
+        self.assertEqual((p["total"], p["learnt"], p["remaining"]), (6, 4, 2))
+        self.assertEqual(p["recent"], 3)            # 2026-10-04 .. 2026-10-31 window
+        self.assertEqual(p["per_week"], 0.75)       # 3 chapters in 4 weeks
+        self.assertEqual(p["this_week"], 1)         # week starts Mon 2026-10-26
+        self.assertEqual(p["days_left"], (self.target - self.today).days)
+        self.assertEqual(p["required_per_week"], round(2 * 7 / p["days_left"], 2))
+        self.assertEqual(p["verdict"], "ahead")
+        self.assertEqual(p["projected_finish"], "2026-11-19")  # 2 chapters at 0.75/week = 19 days
 
-    def test_schedule_position_ahead(self):
-        chapters = [{"terms": ["Spring Y12"], "exercises_status": "done"}]
-        pos = logic.schedule_position(chapters, TERMS, D("2026-10-01"))
-        self.assertEqual((pos["verdict"], pos["diff"]), ("ahead", 1.0))
+    def test_behind_when_pace_too_slow(self):
+        dates = ["2026-10-20"] + [None] * 79
+        p = logic.learning_pace(dates, self.today, D("2027-01-31"))
+        self.assertEqual(p["verdict"], "behind")
+        self.assertGreater(p["required_per_week"], p["per_week"])
+
+    def test_on_track_band(self):
+        # need 1/week (4 left over 28 days); learnt 4 in the last 4 weeks -> exactly on pace
+        dates = ["2026-10-04", "2026-10-11", "2026-10-18", "2026-10-25"] + [None] * 4
+        p = logic.learning_pace(dates, self.today, self.today + timedelta(days=28))
+        self.assertEqual((p["per_week"], p["required_per_week"], p["verdict"]), (1.0, 1.0, "on track"))
+
+    def test_edge_verdicts(self):
+        self.assertEqual(logic.learning_pace([None, None], self.today, self.target)["verdict"], "not started")
+        self.assertEqual(logic.learning_pace(["2026-01-01"], self.today, self.target)["verdict"], "all learnt")
+        self.assertEqual(logic.learning_pace(["2026-01-01", None], self.today, None)["verdict"], "no target")
+        self.assertEqual(logic.learning_pace(["2026-01-01", None], self.today, D("2026-10-01"))["verdict"],
+                         "behind")
+        p = logic.learning_pace(["2025-01-01", None], self.today, self.target)
+        self.assertIsNone(p["projected_finish"])   # no recent pace to project from
+
+    def test_learn_target_setting_or_first_exam(self):
+        s = copy.deepcopy(S)
+        self.assertEqual(logic.learn_target(s), D("2028-05-17"))
+        s["learn_by"] = "2028-03-31"
+        self.assertEqual(logic.learn_target(s), D("2028-03-31"))
+        s["learn_by"], s["exams"] = None, []
+        self.assertIsNone(logic.learn_target(s))
 
 
 class Due(unittest.TestCase):
     def test_due_when_next_review_reached(self):
-        self.assertEqual(logic.is_due("2026-09-10", 3, "taught", IV, D("2026-09-23")), (False, D("2026-09-24")))
-        self.assertEqual(logic.is_due("2026-09-10", 3, "taught", IV, D("2026-09-24")), (True, D("2026-09-24")))
-        self.assertEqual(logic.is_due("2026-09-10", 3, "taught", IV, D("2026-10-30")), (True, D("2026-09-24")))
+        self.assertEqual(logic.is_due("2026-09-10", 3, True, IV, D("2026-09-23")), (False, D("2026-09-24")))
+        self.assertEqual(logic.is_due("2026-09-10", 3, True, IV, D("2026-09-24")), (True, D("2026-09-24")))
+        self.assertEqual(logic.is_due("2026-09-10", 3, True, IV, D("2026-10-30")), (True, D("2026-09-24")))
 
-    def test_taught_but_never_reviewed_is_due(self):
-        self.assertEqual(logic.is_due(None, None, "taught", IV, D("2027-01-05")), (True, None))
-        self.assertEqual(logic.is_due(None, 2, "taught", IV, D("2027-01-05")), (True, None))
+    def test_learnt_but_unrated_is_due(self):
+        self.assertEqual(logic.is_due("2026-09-10", None, True, IV, D("2026-09-10")), (True, D("2026-09-10")))
 
-    def test_not_taught_and_never_reviewed_is_not_due(self):
-        self.assertEqual(logic.is_due(None, None, "in_progress", IV, D("2026-09-22")), (False, None))
-        self.assertEqual(logic.is_due(None, None, "not_yet", IV, D("2026-09-22")), (False, None))
+    def test_not_learnt_is_never_due(self):
+        self.assertEqual(logic.is_due(None, None, False, IV, D("2026-09-22")), (False, None))
+        self.assertEqual(logic.is_due(None, 1, False, IV, D("2027-09-22")), (False, None))
 
 
 class Priority(unittest.TestCase):
     today = D("2027-01-10")
 
     def p(self, **kw):
-        args = dict(confidence=3, last_reviewed=None, taught="taught", marks_lost=0, settings=S, today=self.today)
+        args = dict(confidence=3, anchor="2027-01-10", learnt=True, marks_lost=0, settings=S, today=self.today)
         args.update(kw)
         return logic.priority(**args)
 
     def test_score_is_bounded(self):
-        worst = self.p(confidence=1, last_reviewed="2026-01-01", marks_lost=1000)
-        best = self.p(confidence=5, last_reviewed=self.today.isoformat(), taught="not_yet")
+        worst = self.p(confidence=1, anchor="2026-01-01", marks_lost=1000)
+        best = self.p(confidence=5, anchor=None, learnt=False)
         self.assertLessEqual(worst["score"], 100)
-        self.assertGreaterEqual(best["score"], 0)
+        self.assertEqual(worst["score"], round(35 + 25 + 25 * 1000 / 1008 + 15, 1))
         self.assertEqual(best["score"], 0.0)
 
     def test_lower_confidence_scores_higher(self):
-        scores = [self.p(confidence=c, last_reviewed="2027-01-10")["score"] for c in (1, 2, 3, 4, 5)]
+        scores = [self.p(confidence=c)["score"] for c in (1, 2, 3, 4, 5)]
         self.assertEqual(scores, sorted(scores, reverse=True))
         self.assertEqual(self.p(confidence=None)["components"]["confidence"], 1.0)
 
     def test_overdue_component(self):
-        # conf 3 -> 14-day interval. Reviewed 2026-12-20 -> due 2027-01-03 -> 7 days late on 01-10.
-        r = self.p(confidence=3, last_reviewed="2026-12-20")
-        self.assertAlmostEqual(r["components"]["overdue"], 0.5)
-        not_yet_due = self.p(confidence=3, last_reviewed="2027-01-05")
-        self.assertEqual(not_yet_due["components"]["overdue"], 0.0)
-        very_late = self.p(confidence=3, last_reviewed="2026-06-01")
-        self.assertEqual(very_late["components"]["overdue"], 1.0)  # capped
+        # conf 3 -> 14-day interval. Anchor 2026-12-20 -> due 2027-01-03 -> 7 days late on 01-10.
+        self.assertAlmostEqual(self.p(anchor="2026-12-20")["components"]["overdue"], 0.5)
+        self.assertEqual(self.p(anchor="2027-01-05")["components"]["overdue"], 0.0)
+        self.assertEqual(self.p(anchor="2026-06-01")["components"]["overdue"], 1.0)  # capped
 
     def test_more_overdue_scores_higher(self):
-        a = self.p(last_reviewed="2026-12-26")["score"]   # 1 day late
-        b = self.p(last_reviewed="2026-12-15")["score"]   # 12 days late
-        self.assertGreater(b, a)
+        self.assertGreater(self.p(anchor="2026-12-15")["score"], self.p(anchor="2026-12-26")["score"])
 
-    def test_taught_never_reviewed_counts_fully_overdue(self):
-        self.assertEqual(self.p(last_reviewed=None, taught="taught")["components"]["overdue"], 1.0)
-        self.assertEqual(self.p(last_reviewed=None, taught="in_progress")["components"]["overdue"], 0.0)
+    def test_learnt_unrated_counts_fully_overdue(self):
+        self.assertEqual(self.p(confidence=None)["components"]["overdue"], 1.0)
+
+    def test_not_learnt_is_never_overdue(self):
+        r = self.p(learnt=False, anchor=None)
+        self.assertEqual((r["components"]["overdue"], r["components"]["learnt"]), (0.0, 0.0))
 
     def test_marks_lost_saturates(self):
         half = S["marks_half_point"]
@@ -150,24 +160,21 @@ class Priority(unittest.TestCase):
         self.assertEqual(m, sorted(m))
         self.assertLess(self.p(marks_lost=10_000)["components"]["marks"], 1.0 + 1e-9)
 
-    def test_taught_component(self):
-        self.assertEqual(self.p(taught="taught")["components"]["taught"], 1.0)
-        self.assertEqual(self.p(taught="in_progress")["components"]["taught"], 0.5)
-        self.assertEqual(self.p(taught="not_yet")["components"]["taught"], 0.0)
-        self.assertGreater(self.p(taught="taught")["score"], self.p(taught="not_yet")["score"])
+    def test_learnt_component(self):
+        self.assertEqual(self.p(learnt=True)["components"]["learnt"], 1.0)
+        self.assertGreater(self.p(learnt=True)["score"], self.p(learnt=False)["score"])
 
     def test_exact_weighted_score(self):
-        # conf 2 -> 0.75; 7 days late on a 7-day interval -> overdue 1.0; 8 marks -> 0.5; taught -> 1
-        r = self.p(confidence=2, last_reviewed="2026-12-27", marks_lost=8)
-        self.assertEqual(r["components"], {"confidence": 0.75, "overdue": 1.0, "marks": 0.5, "taught": 1.0})
+        # conf 2 -> 0.75; 7 days late on a 7-day interval -> overdue 1.0; 8 marks -> 0.5; learnt -> 1
+        r = self.p(confidence=2, anchor="2026-12-27", marks_lost=8)
+        self.assertEqual(r["components"], {"confidence": 0.75, "overdue": 1.0, "marks": 0.5, "learnt": 1.0})
         expected = 100 * (35 * 0.75 + 25 * 1.0 + 25 * 0.5 + 15 * 1.0) / 100
         self.assertEqual(r["score"], round(expected, 1))
 
     def test_custom_weights(self):
         s = copy.deepcopy(S)
-        s["priority_weights"] = {"confidence": 0, "overdue": 0, "marks": 1, "taught": 0}
-        r = logic.priority(1, None, "taught", 8, s, self.today)
-        self.assertEqual(r["score"], 50.0)
+        s["priority_weights"] = {"confidence": 0, "overdue": 0, "marks": 1, "learnt": 0}
+        self.assertEqual(logic.priority(1, None, True, 8, s, self.today)["score"], 50.0)
 
 
 class PapersAndHabits(unittest.TestCase):

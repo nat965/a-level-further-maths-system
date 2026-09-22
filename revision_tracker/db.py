@@ -12,7 +12,7 @@ from pathlib import Path
 
 from . import logic
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 DB_NAME = "tracker.sqlite3"
 KEEP_DAILY_BACKUPS = 30
 
@@ -30,6 +30,7 @@ CREATE TABLE IF NOT EXISTS chapters (
     exercises_status TEXT NOT NULL DEFAULT 'not_started',
     examq_status TEXT NOT NULL DEFAULT 'not_started',
     confidence INTEGER CHECK (confidence BETWEEN 1 AND 5),
+    first_learnt TEXT,
     notes TEXT NOT NULL DEFAULT '',
     sort_order INTEGER NOT NULL DEFAULT 0
 );
@@ -118,8 +119,7 @@ class Store:
         self._last_backup_day = None
         with self.tx() as con:
             con.executescript(SCHEMA)
-            con.execute("INSERT OR IGNORE INTO meta(key, value) VALUES ('schema_version', ?)",
-                        (str(SCHEMA_VERSION),))
+            migrate(con)
             if con.execute("SELECT COUNT(*) FROM chapters").fetchone()[0] == 0:
                 seed_chapters(con)
 
@@ -153,7 +153,9 @@ class Store:
             if own:
                 con.close()
         merged = json.loads(json.dumps(logic.DEFAULT_SETTINGS))
-        merged.update(stored)
+        merged.update({k: v for k, v in stored.items() if k in merged})  # drop retired keys
+        if set(merged["priority_weights"]) != set(logic.DEFAULT_SETTINGS["priority_weights"]):
+            merged["priority_weights"] = dict(logic.DEFAULT_SETTINGS["priority_weights"])
         return merged
 
     def save_settings(self, updates):
@@ -266,6 +268,7 @@ class Store:
                 bad = con.execute("PRAGMA foreign_key_check").fetchall()
                 if bad:
                     raise ValueError(f"Import has {len(bad)} broken references")
+                migrate(con)  # an export from an older version may need upgrading
                 con.commit()
             except Exception:
                 con.rollback()
@@ -294,6 +297,7 @@ class Store:
                 bad = con.execute("PRAGMA foreign_key_check").fetchall()
                 if bad:
                     raise ValueError(f"Import has {len(bad)} broken references")
+                migrate(con)  # an export from an older version may need upgrading
                 con.commit()
             except Exception:
                 con.rollback()
@@ -332,6 +336,25 @@ def table_to_csv(store, table, rows):
     return out.getvalue()
 
 
+def migrate(con):
+    """Bring an older database up to the current schema, keeping all data."""
+    cols = [r[1] for r in con.execute("PRAGMA table_info(chapters)")]
+    if "first_learnt" not in cols:
+        # v1 -> v2: chapters get a 'first learnt' date.
+        con.execute("ALTER TABLE chapters ADD COLUMN first_learnt TEXT")
+    con.execute("UPDATE chapters SET first_learnt = (SELECT MIN(reviewed_on) FROM reviews "
+                "WHERE reviews.chapter_id = chapters.id) WHERE first_learnt IS NULL")
+    row = con.execute("SELECT value FROM settings WHERE key = 'priority_weights'").fetchone()
+    if row:
+        w = json.loads(row[0])
+        if "taught" in w:  # the 'taught by school' weight became 'learnt yet'
+            w["learnt"] = w.pop("taught")
+            con.execute("UPDATE settings SET value = ? WHERE key = 'priority_weights'", (json.dumps(w),))
+    con.execute("DELETE FROM settings WHERE key = 'terms'")
+    con.execute("INSERT INTO meta(key, value) VALUES ('schema_version', ?) "
+                "ON CONFLICT(key) DO UPDATE SET value = excluded.value", (str(SCHEMA_VERSION),))
+
+
 def seed_chapters(con):
     seed = json.loads((Path(__file__).parent / "seed_chapters.json").read_text(encoding="utf-8"))
     for i, c in enumerate(seed):
@@ -350,11 +373,8 @@ def validate_settings(s):
         for v in iv.values():
             if not isinstance(v, int) or not 1 <= v <= 365:
                 raise ValueError("Each interval must be a whole number of days, 1-365")
-    if "terms" in s:
-        for t in s["terms"]:
-            a, b = logic.parse_date(t["start"]), logic.parse_date(t["end"])
-            if not t.get("name") or a is None or b is None or b < a:
-                raise ValueError(f"Term {t.get('name')!r} needs a start before its end")
+    if "learn_by" in s and s["learn_by"] not in (None, "") and logic.parse_date(s["learn_by"]) is None:
+        raise ValueError("Learn-by date must be a date or empty")
     if "exams" in s:
         for e in s["exams"]:
             if not e.get("name") or logic.parse_date(e.get("date")) is None:
@@ -365,8 +385,8 @@ def validate_settings(s):
                 raise ValueError("Each paper needs a code and a positive max mark")
     if "priority_weights" in s:
         w = s["priority_weights"]
-        if set(w) != {"confidence", "overdue", "marks", "taught"}:
-            raise ValueError("Priority weights: confidence, overdue, marks, taught")
+        if set(w) != {"confidence", "overdue", "marks", "learnt"}:
+            raise ValueError("Priority weights: confidence, overdue, marks, learnt")
         if any(not isinstance(v, (int, float)) or v < 0 for v in w.values()) or sum(w.values()) <= 0:
             raise ValueError("Priority weights must be non-negative and not all zero")
     if "marks_half_point" in s and (not isinstance(s["marks_half_point"], (int, float))

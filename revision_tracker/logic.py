@@ -1,4 +1,4 @@
-"""Pure calculation logic: dates, spaced repetition, school schedule, priority.
+"""Pure calculation logic: dates, spaced repetition, learning pace, priority.
 
 Everything here is side-effect free and takes ``today`` explicitly so it can be
 unit-tested without touching the clock or the database.
@@ -12,14 +12,6 @@ GRADES = ("A*", "A", "B", "C", "D", "E")
 DEFAULT_SETTINGS = {
     # Days until the next review, keyed by confidence (1 = shaky, 5 = exam-ready).
     "intervals": {"1": 3, "2": 7, "3": 14, "4": 30, "5": 60},
-    # School terms. Estimated from typical English school calendars; edit in Settings.
-    "terms": [
-        {"name": "Autumn Y12", "start": "2026-09-02", "end": "2026-12-18"},
-        {"name": "Spring Y12", "start": "2027-01-04", "end": "2027-03-26"},
-        {"name": "Summer Y12", "start": "2027-04-12", "end": "2027-07-21"},
-        {"name": "Autumn Y13", "start": "2027-09-01", "end": "2027-12-17"},
-        {"name": "Spring Y13", "start": "2028-01-04", "end": "2028-04-07"},
-    ],
     # The June 2028 timetable is not published yet: these are placeholders.
     "exams": [
         {"name": "Further Maths Y540 Pure Core 1", "date": "2028-05-17", "confirmed": False},
@@ -41,11 +33,13 @@ DEFAULT_SETTINGS = {
         {"code": "Y543", "name": "Mechanics", "max": 75},
     ],
     # Relative weights of the four priority components (any positive numbers).
-    "priority_weights": {"confidence": 35, "overdue": 25, "marks": 25, "taught": 15},
+    "priority_weights": {"confidence": 35, "overdue": 25, "marks": 25, "learnt": 15},
     # Marks lost at which the "marks lost" component reaches 0.5 (it saturates towards 1).
     "marks_half_point": 8,
     # Default gap before retesting a logged mistake.
     "mistake_retest_days": 7,
+    # Date by which you want to have learnt every chapter (None = your first exam).
+    "learn_by": None,
     "theme": "system",
     "open_in": "app_window",
 }
@@ -77,92 +71,75 @@ def interval_for(confidence, intervals):
     return int(intervals[str(int(confidence))])
 
 
-def next_review(last_reviewed, confidence, intervals):
-    """Next review date = last review + interval for the current confidence."""
-    last = parse_date(last_reviewed)
+def schedule_anchor(last_reviewed, first_learnt):
+    """Reviews are scheduled from the last review, or from the day you first learnt the
+    chapter if you haven't reviewed it yet."""
+    return parse_date(last_reviewed) or parse_date(first_learnt)
+
+
+def next_review(anchor, confidence, intervals):
+    """Next review date = anchor (last review, else first learnt) + interval for the
+    current confidence."""
+    last = parse_date(anchor)
     gap = interval_for(confidence, intervals)
     if last is None or gap is None:
         return None
     return last + timedelta(days=gap)
 
 
-# ---------------------------------------------------------------- school schedule
+# ---------------------------------------------------------------- learning pace
 
-def _term_map(terms_cfg):
-    return {t["name"]: (parse_date(t["start"]), parse_date(t["end"])) for t in terms_cfg}
-
-
-def chapter_window(chapter_terms, terms_cfg):
-    """(start of first term, start of last term, end of last term) for a chapter."""
-    tm = _term_map(terms_cfg)
-    spans = [tm[t] for t in chapter_terms if t in tm]
-    if not spans:
-        return None
-    last = max(spans, key=lambda s: s[1])
-    return min(s[0] for s in spans), last[0], last[1]
+def learn_target(settings):
+    """The date to have learnt everything by: the setting, else the first exam."""
+    t = parse_date(settings.get("learn_by"))
+    if t:
+        return t
+    exams = [parse_date(e.get("date")) for e in settings.get("exams", [])]
+    exams = [d for d in exams if d]
+    return min(exams) if exams else None
 
 
-def taught_status(chapter_terms, terms_cfg, today):
-    """'taught' once its (last) term has ended, 'in_progress' once its first term has
-    started, otherwise 'not_yet'."""
-    win = chapter_window(chapter_terms, terms_cfg)
-    if win is None:
-        return "not_yet"
-    first_start, _, last_end = win
-    if today > last_end:
-        return "taught"
-    if today >= first_start:
-        return "in_progress"
-    return "not_yet"
+def learning_pace(first_learnt_dates, today, target, window_days=28):
+    """Compare your recent learning pace with the pace needed to learn every chapter by
+    ``target``.
 
-
-def expected_fraction(chapter_terms, terms_cfg, today):
-    """How much of this chapter school should have finished by today (0..1), pro-rating
-    the chapter's final term linearly."""
-    win = chapter_window(chapter_terms, terms_cfg)
-    if win is None:
-        return 0.0
-    _, start, end = win
-    if today >= end:
-        return 1.0
-    if today < start:
-        return 0.0
-    return (today - start).days / max(1, (end - start).days)
-
-
-def schedule_position(chapters, terms_cfg, today):
-    """Compare chapters covered (exercises done) with where school should be.
-
-    ``chapters``: iterable of dicts with ``terms`` (list) and ``exercises_status``.
-    Returns overall figures and a per-term breakdown (multi-term chapters count in
-    each of their terms, like the original spreadsheet).
+    first_learnt_dates: one entry per chapter, a date/ISO string or None if not learnt.
+    Recent pace = chapters first learnt in the last ``window_days`` days, per week.
     """
-    chapters = list(chapters)
-    expected = sum(expected_fraction(c["terms"], terms_cfg, today) for c in chapters)
-    covered = sum(1 for c in chapters if c["exercises_status"] == "done")
-    per_term = []
-    for t in terms_cfg:
-        in_term = [c for c in chapters if t["name"] in c["terms"]]
-        start, end = parse_date(t["start"]), parse_date(t["end"])
-        if today > end:
-            state, frac = "finished", 1.0
-        elif today >= start:
-            state, frac = "current", (today - start).days / max(1, (end - start).days)
-        else:
-            state, frac = "upcoming", 0.0
-        done = sum(1 for c in in_term if c["exercises_status"] == "done")
-        exp = round(frac * len(in_term), 1)
-        per_term.append({"term": t["name"], "state": state, "chapters": len(in_term),
-                         "covered": done, "expected": exp, "diff": round(done - exp, 1)})
-    diff = round(covered - expected, 1)
-    if diff >= 0.5:
-        verdict = "ahead"
-    elif diff <= -0.5:
+    dates = [parse_date(d) for d in first_learnt_dates]
+    total = len(dates)
+    learnt = sum(1 for d in dates if d is not None and d <= today)
+    remaining = total - learnt
+    window_start = today - timedelta(days=window_days - 1)
+    recent = sum(1 for d in dates if d is not None and window_start <= d <= today)
+    per_week = round(recent * 7 / window_days, 2)
+    this_week = sum(1 for d in dates if d is not None and week_start(today) <= d <= today)
+    days_left = (target - today).days if target else None
+    required = None
+    if days_left is not None and days_left > 0 and remaining:
+        required = round(remaining * 7 / days_left, 2)
+    projected = None
+    if remaining and per_week > 0:
+        projected = today + timedelta(days=int(-(-remaining * 7 // per_week)))  # ceil
+
+    if remaining == 0:
+        verdict = "all learnt"
+    elif target is None:
+        verdict = "no target"
+    elif days_left <= 0:
         verdict = "behind"
-    else:
+    elif learnt == 0:
+        verdict = "not started"
+    elif per_week >= required * 1.1:
+        verdict = "ahead"
+    elif per_week >= required * 0.9:
         verdict = "on track"
-    return {"covered": covered, "expected": round(expected, 1), "diff": diff,
-            "verdict": verdict, "per_term": per_term}
+    else:
+        verdict = "behind"
+    return {"total": total, "learnt": learnt, "remaining": remaining, "recent": recent,
+            "per_week": per_week, "required_per_week": required, "this_week": this_week,
+            "target": iso(target), "days_left": days_left, "projected_finish": iso(projected),
+            "verdict": verdict}
 
 
 # ---------------------------------------------------------------- priority
@@ -171,34 +148,35 @@ def _clamp(x, lo=0.0, hi=1.0):
     return max(lo, min(hi, x))
 
 
-def is_due(last_reviewed, confidence, taught, intervals, today):
-    """Due if the next review date has passed, or school has taught it and it has never
-    been reviewed. Returns (due: bool, due_date: date|None)."""
-    nxt = next_review(last_reviewed, confidence, intervals)
-    if nxt is not None:
-        return nxt <= today, nxt
-    if parse_date(last_reviewed) is None and taught == "taught":
-        return True, None
-    return False, None
+def is_due(anchor, confidence, learnt, intervals, today):
+    """Returns (due, due_date). Chapters you haven't learnt yet are never due. A learnt
+    chapter with no confidence rating is due straight away (it needs rating); otherwise
+    it's due once its next review date arrives."""
+    if not learnt:
+        return False, None
+    nxt = next_review(anchor, confidence, intervals)
+    if nxt is None:
+        return True, parse_date(anchor)
+    return nxt <= today, nxt
 
 
-def priority(confidence, last_reviewed, taught, marks_lost, settings, today):
+def priority(confidence, anchor, learnt, marks_lost, settings, today):
     """Priority score 0..100 (higher = work on it sooner) plus its components (0..1).
 
     confidence: low confidence -> high. Unrated counts as 1.
-    overdue:    days past the next review date / that interval (capped at 1). A chapter
-                school has taught but you have never reviewed counts as fully overdue.
+    overdue:    days past the next review date / that interval (capped at 1). A learnt
+                chapter with no confidence rating counts as fully overdue.
     marks:      marks lost in past papers, m / (m + half_point), saturating to 1.
-    taught:     1 if school has finished it, 0.5 if its term is running, 0 if not yet.
+    learnt:     1 once you've learnt the chapter, 0 before.
     """
     intervals = settings["intervals"]
     conf_c = 1.0 if confidence is None else _clamp((5 - int(confidence)) / 4)
 
-    nxt = next_review(last_reviewed, confidence, intervals)
+    nxt = next_review(anchor, confidence, intervals) if learnt else None
     if nxt is not None:
         late = (today - nxt).days
         overdue_c = _clamp(late / interval_for(confidence, intervals)) if late > 0 else 0.0
-    elif parse_date(last_reviewed) is None and taught == "taught":
+    elif learnt:
         overdue_c = 1.0
     else:
         overdue_c = 0.0
@@ -207,16 +185,16 @@ def priority(confidence, last_reviewed, taught, marks_lost, settings, today):
     m = max(0.0, float(marks_lost or 0))
     marks_c = m / (m + half)
 
-    taught_c = {"taught": 1.0, "in_progress": 0.5}.get(taught, 0.0)
+    learnt_c = 1.0 if learnt else 0.0
 
     w = settings["priority_weights"]
     total_w = sum(float(v) for v in w.values()) or 1.0
     raw = (float(w["confidence"]) * conf_c + float(w["overdue"]) * overdue_c
-           + float(w["marks"]) * marks_c + float(w["taught"]) * taught_c)
+           + float(w["marks"]) * marks_c + float(w["learnt"]) * learnt_c)
     return {
         "score": round(100 * raw / total_w, 1),
         "components": {"confidence": round(conf_c, 3), "overdue": round(overdue_c, 3),
-                       "marks": round(marks_c, 3), "taught": taught_c},
+                       "marks": round(marks_c, 3), "learnt": learnt_c},
     }
 
 

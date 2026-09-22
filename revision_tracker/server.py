@@ -73,6 +73,11 @@ def chapter_review(app, req, cid):
     return service.review_chapter(app.store, int(cid), body.get("confidence"), body.get("note", ""), today())
 
 
+@route("POST", r"/api/chapters/(\d+)/learnt")
+def chapter_learnt(app, req, cid):
+    return service.mark_learnt(app.store, int(cid), req.json().get("confidence"), today())
+
+
 @route("GET", r"/api/chapters/(\d+)/history")
 def chapter_history(app, req, cid):
     return service.chapter_history(app.store, int(cid), today())

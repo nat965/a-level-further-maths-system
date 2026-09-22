@@ -6,7 +6,7 @@ const S = {
   chapters: [],        // enriched chapters
   route: "due",
   sel: 0,              // keyboard-selected row index in the current list
-  filters: { q: "", strand: "", book: "", term: "", status: "" },
+  filters: { q: "", strand: "", book: "", status: "" },
   sort: { key: "sort_order", dir: 1 },
   papersOpen: new Set(),
   mistakeFilter: "open",
@@ -19,7 +19,6 @@ const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
 const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const STATUS_LABEL = { not_started: "Not started", in_progress: "In progress", done: "Done" };
 const CONF_LABEL = { 1: "Shaky", 2: "Weak", 3: "OK", 4: "Good", 5: "Exam-ready" };
-const TAUGHT_LABEL = { taught: "Taught", in_progress: "Being taught", not_yet: "Not yet taught" };
 
 function parseISO(s) { if (!s) return null; const [y, m, d] = s.slice(0, 10).split("-").map(Number); return new Date(y, m - 1, d); }
 function fmtDate(s, withYear = true) {
@@ -61,13 +60,13 @@ async function guard(fn) { try { return await fn(); } catch (e) { toast(e.messag
 
 function confBadge(c) { return c ? `<span class="conf c${c}" title="${CONF_LABEL[c]}">${c}</span>` : `<span class="conf" title="Not rated">–</span>`; }
 function prioBadge(p) { return `<span class="prio" title="Priority score (0–100)"><span class="bar"><i style="width:${Math.min(100, p)}%"></i></span>${p.toFixed(0)}</span>`; }
-function taughtPill(t) { return `<span class="pill ${t === "taught" ? "" : t === "in_progress" ? "info" : ""}">${TAUGHT_LABEL[t]}</span>`; }
+function learntPill(c) { return c.learnt ? `<span class="pill good">✓ Learnt ${fmtDate(c.first_learnt)}</span>` : `<span class="pill">Not learnt yet</span>`; }
 function dueReason(c) {
   if (c.next_review) {
     const late = -c.days_until_review;
     return late > 0 ? `<span class="pill bad">⚠ ${plural(late, "day")} overdue</span>` : `<span class="pill warn">● Due today</span>`;
   }
-  return `<span class="pill warn">● Taught, never reviewed</span>`;
+  return `<span class="pill warn">● Learnt — rate your confidence</span>`;
 }
 function statusSelect(c, field) {
   return `<select class="st-${c[field]}" data-change="status" data-id="${c.id}" data-field="${field}" aria-label="${field.replace("_status", "")} status">` +
@@ -135,30 +134,15 @@ async function renderDue(main) {
   const [due] = await Promise.all([api("GET", "/api/due"), loadChapters()]);
   const nC = due.chapters.length, nR = due.retests.length;
   let html = `<div class="page-head"><h1>Due today</h1><span class="muted">${fmtDate(S.boot.today, false)}</span><div class="spacer"></div>
-    <span class="muted small">Sorted by priority · <kbd>j</kbd>/<kbd>k</kbd> move · <kbd>r</kbd> reviewed today · <kbd>Enter</kbd> details</span></div>`;
+    <span class="muted small">Sorted by priority · <kbd>j</kbd>/<kbd>k</kbd> move · <kbd>r</kbd> reviewed today · <kbd>l</kbd> learnt today · <kbd>Enter</kbd> details</span></div>`;
   html += `<div class="grid cols-3">
-    <div class="card stat"><div class="label">Chapters due</div><div class="big">${nC}</div><div class="sub">${due.chapters.filter((c) => c.days_until_review !== null && c.days_until_review < 0).length} overdue · ${due.chapters.filter((c) => !c.last_reviewed).length} never reviewed</div></div>
+    <div class="card stat"><div class="label">Chapters due</div><div class="big">${nC}</div><div class="sub">${due.chapters.filter((c) => c.days_until_review !== null && c.days_until_review < 0).length} overdue · ${due.chapters.filter((c) => !c.last_reviewed).length} first reviews</div></div>
     <div class="card stat"><div class="label">Mistake retests due</div><div class="big">${nR}</div><div class="sub">from your mistakes log</div></div>
     <div class="card stat"><div class="label">Coming up (7 days)</div><div class="big">${due.upcoming.length}</div><div class="sub">${due.upcoming[0] ? esc(due.upcoming[0].title) + " " + relDays(due.upcoming[0].days_until_review) : "nothing scheduled"}</div></div></div>`;
 
-  html += `<div class="section"><h2>Chapters to review</h2>`;
-  if (!nC) {
-    html += `<div class="empty">🎉 Nothing due. ${due.suggested.length ? "Suggested next — school has started these but you haven't reviewed them yet:" : "Log a review on any chapter to start its schedule."}</div>`;
-  }
-  const list = nC ? due.chapters : due.suggested;
-  if (list.length) {
-    html += `<div class="due-list" ${nC ? "" : 'style="margin-top:8px"'}>` + list.map((c) => `
-      <div class="due-item" data-row data-id="${c.id}">
-        <div><div class="t" data-action="open" data-id="${c.id}">${esc(c.title)}</div>
-          <div class="meta">${nC ? dueReason(c) : taughtPill(c.taught)} <span>${esc(c.strand)} · ${esc(c.book)} ch ${c.ch_num}</span>
-          <span>Confidence ${confBadge(c.confidence)}</span>
-          ${c.last_reviewed ? `<span>Last reviewed ${relDays(-c.days_since)}</span>` : ""}
-          ${c.marks_lost ? `<span class="pill bad">−${c.marks_lost} marks in papers${c.top_error ? " · " + esc(c.top_error) : ""}</span>` : ""}</div></div>
-        <div class="actions">${prioBadge(c.priority)}<button class="primary" data-action="review" data-id="${c.id}">✓ Reviewed today</button></div>
-      </div>`).join("") + `</div>`;
-  }
+  html += `<div class="section" id="review-section"><h2>Chapters to review</h2>`;
+  html += nC ? dueCards(due.chapters, true) : `<div class="empty">🎉 Nothing due for review. ${S.chapters.some((c) => c.learnt) ? "Nice work." : "Mark chapters as learnt and their reviews will be scheduled from that day."}</div>`;
   html += `</div>`;
-
   if (nR) {
     html += `<div class="section"><h2>Mistake retests</h2><div class="due-list">` + due.retests.map((m) => `
       <div class="due-item" data-row>
@@ -174,18 +158,39 @@ async function renderDue(main) {
       due.upcoming.map((c) => `<tr><td class="title-cell"><a data-action="open" data-id="${c.id}">${esc(c.title)}</a></td><td>${esc(c.strand)}</td><td>${confBadge(c.confidence)}</td><td>${fmtDate(c.next_review, false)} (${relDays(c.days_until_review)})</td></tr>`).join("") +
       `</tbody></table></div></div>`;
   }
+  if (due.next_to_learn.length) {
+    html += `<div class="section" id="learn-section"><h2>Next to learn</h2><p class="small muted" style="margin:-4px 0 8px">The first chapter you haven't learnt yet in each book. Press <b>Learnt today</b> when you've learnt it (<kbd>l</kbd>).</p>${dueCards(due.next_to_learn, false)}</div>`;
+  }
   main.innerHTML = html;
+}
+
+function dueCards(list, isDue) {
+  return `<div class="due-list">` + list.map((c) => `
+      <div class="due-item" data-row data-id="${c.id}">
+        <div><div class="t" data-action="open" data-id="${c.id}">${esc(c.title)}</div>
+          <div class="meta">${isDue ? dueReason(c) : learntPill(c)} <span>${esc(c.strand)} · ${esc(c.book)} ch ${c.ch_num}</span>
+          ${c.learnt ? `<span>Confidence ${confBadge(c.confidence)}</span>` : ""}
+          ${c.last_reviewed ? `<span>Last reviewed ${relDays(-c.days_since)}</span>` : c.learnt ? `<span>Learnt ${relDays(-c.days_since_learnt)}</span>` : ""}
+          ${c.marks_lost ? `<span class="pill bad">−${c.marks_lost} marks in papers${c.top_error ? " · " + esc(c.top_error) : ""}</span>` : ""}</div></div>
+        <div class="actions">${isDue ? prioBadge(c.priority) : ""}${actionButton(c, true)}</div>
+      </div>`).join("") + `</div>`;
+}
+
+function actionButton(c, big) {
+  return c.learnt
+    ? `<button class="${big ? "primary" : "small"}" data-action="review" data-id="${c.id}" title="Reviewed today (r)">✓ Reviewed${big ? " today" : ""}</button>`
+    : `<button class="${big ? "primary" : "small"}" data-action="learnt" data-id="${c.id}" title="Learnt today (l)">★ Learnt${big ? " today" : ""}</button>`;
 }
 
 // ------------------------------------------------------------------ Chapters
 
 const CH_COLS = [
-  ["strand", "Strand"], ["book", "Book"], ["ch_num", "Ch"], ["title", "Chapter"], ["level", "Level"], ["terms", "Term"],
+  ["strand", "Strand"], ["book", "Book"], ["ch_num", "Ch"], ["title", "Chapter"], ["level", "Level"], ["first_learnt", "First learnt"],
   ["summary_status", "Summary"], ["exercises_status", "Exercises"], ["examq_status", "Exam Qs"], ["confidence", "Conf"],
   ["last_reviewed", "Last review"], ["days_since", "Days since"], ["next_review", "Next review"], ["marks_lost", "Marks lost"], ["priority", "Priority"],
 ];
 const STATUS_FILTERS = {
-  "": "Any status", due: "Due for review", never: "Never reviewed", not_started: "Not started (all three)",
+  "": "Any status", learnt: "Learnt", not_learnt: "Not learnt yet", due: "Due for review", never: "Learnt, never reviewed", not_started: "Not started (all three)",
   in_progress: "In progress", done: "Complete (all three done)", weak: "Confidence 1–2", lost: "Lost marks in papers",
 };
 
@@ -194,12 +199,13 @@ function filteredChapters() {
   let list = S.chapters.filter((c) => {
     if (f.strand && c.strand !== f.strand) return false;
     if (f.book && c.book !== f.book) return false;
-    if (f.term && !c.terms.includes(f.term)) return false;
     if (q && !(`${c.title} ${c.sections} ${c.book} ${c.strand} ${c.notes}`.toLowerCase().includes(q))) return false;
     const st = [c.summary_status, c.exercises_status, c.examq_status];
     switch (f.status) {
       case "due": return c.due;
-      case "never": return !c.last_reviewed;
+      case "learnt": return c.learnt;
+      case "not_learnt": return !c.learnt;
+      case "never": return c.learnt && !c.last_reviewed;
       case "not_started": return st.every((s) => s === "not_started");
       case "in_progress": return st.some((s) => s !== "not_started") && !st.every((s) => s === "done");
       case "done": return st.every((s) => s === "done");
@@ -209,7 +215,7 @@ function filteredChapters() {
     return true;
   });
   const { key, dir } = S.sort;
-  const val = (c) => { const v = c[key]; if (key === "terms") return v.join(); if (key.endsWith("_status")) return S.boot.statuses.indexOf(v); return v; };
+  const val = (c) => { const v = c[key]; if (key.endsWith("_status")) return S.boot.statuses.indexOf(v); return v; };
   list.sort((a, b) => {
     const x = val(a), y = val(b);
     if (x === y) return a.sort_order - b.sort_order;
@@ -226,12 +232,11 @@ async function renderChapters(main) {
   const opt = (vals, cur, all) => `<option value="">${all}</option>` + vals.map((v) => `<option ${v === cur ? "selected" : ""}>${esc(v)}</option>`).join("");
   const f = S.filters;
   main.innerHTML = `<div class="page-head"><h1>Chapters</h1><span class="muted" id="ch-count"></span><div class="spacer"></div>
-      <span class="muted small"><kbd>/</kbd> search · <kbd>j</kbd>/<kbd>k</kbd> move · <kbd>r</kbd> reviewed today · <kbd>Enter</kbd> history</span></div>
+      <span class="muted small"><kbd>/</kbd> search · <kbd>j</kbd>/<kbd>k</kbd> move · <kbd>l</kbd> learnt today · <kbd>r</kbd> reviewed today · <kbd>Enter</kbd> history</span></div>
     <div class="filters">
       <input type="search" id="ch-search" placeholder="Search chapters, sections, notes…" value="${esc(f.q)}" aria-label="Search">
       <select data-filter="strand" aria-label="Strand">${opt(uniq("strand"), f.strand, "All strands")}</select>
       <select data-filter="book" aria-label="Book">${opt(uniq("book"), f.book, "All books")}</select>
-      <select data-filter="term" aria-label="Term">${opt(S.boot.settings.terms.map((t) => t.name), f.term, "All terms")}</select>
       <select data-filter="status" aria-label="Status">${Object.entries(STATUS_FILTERS).map(([k, v]) => `<option value="${k}" ${k === f.status ? "selected" : ""}>${v}</option>`).join("")}</select>
       <button class="ghost small" data-action="clear-filters">Clear filters</button>
     </div>
@@ -246,7 +251,7 @@ function drawChapterTable() {
   $("#ch-table tbody").innerHTML = list.map((c) => `<tr data-row data-id="${c.id}">
     <td>${esc(c.strand)}</td><td class="small">${esc(c.book)}</td><td class="num">${c.ch_num}</td>
     <td class="title-cell"><a data-action="open" data-id="${c.id}">${esc(c.title)}</a></td>
-    <td>${esc(c.level)}</td><td class="small nowrap">${c.terms.map(esc).join("<br>")}</td>
+    <td>${esc(c.level)}</td><td class="small nowrap">${c.first_learnt ? fmtDate(c.first_learnt) : "—"}</td>
     <td>${statusSelect(c, "summary_status")}</td><td>${statusSelect(c, "exercises_status")}</td><td>${statusSelect(c, "examq_status")}</td>
     <td><select data-change="confidence" data-id="${c.id}" aria-label="Confidence"><option value="">–</option>${[1, 2, 3, 4, 5].map((n) => `<option ${c.confidence === n ? "selected" : ""}>${n}</option>`).join("")}</select></td>
     <td class="small">${c.last_reviewed ? fmtDate(c.last_reviewed) : "—"}</td>
@@ -254,7 +259,7 @@ function drawChapterTable() {
     <td class="small">${c.next_review ? (c.due ? `<span class="pill ${c.days_until_review < 0 ? "bad" : "warn"}">${fmtDate(c.next_review, false)}</span>` : fmtDate(c.next_review, false)) : c.due ? `<span class="pill warn">now</span>` : "—"}</td>
     <td class="num">${c.marks_lost || "—"}</td>
     <td>${prioBadge(c.priority)}</td>
-    <td><button class="small" data-action="review" data-id="${c.id}" title="Reviewed today (r)">✓ Reviewed</button></td></tr>`).join("") ||
+    <td>${actionButton(c, false)}</td></tr>`).join("") ||
     `<tr><td colspan="${CH_COLS.length + 1}" class="muted" style="text-align:center;padding:24px">No chapters match these filters.</td></tr>`;
   highlightSelection(false);
 }
@@ -265,6 +270,7 @@ async function openChapter(id) {
   const h = await api("GET", `/api/chapters/${id}/history`);
   const c = h.chapter;
   const events = [
+    ...(c.first_learnt ? [{ date: c.first_learnt, kind: "l", html: `<b>First learnt</b> ★` }] : []),
     ...h.reviews.map((r) => ({ date: r.reviewed_on, kind: "r", html: `<b>Reviewed</b> — confidence ${r.confidence_before ?? "–"} → <b>${r.confidence_after}</b>${r.note ? `<div>${esc(r.note)}</div>` : ""} <button class="ghost small danger" data-action="del-review" data-id="${r.id}" title="Delete this review">Undo</button>` })),
     ...h.questions.map((q) => ({ date: q.sat_on, kind: "q", html: `<b>Lost ${q.marks_lost} mark${q.marks_lost === 1 ? "" : "s"}</b> on ${esc(q.paper_code)} ${esc(q.series)} Q${esc(q.q_num)} <span class="pill">${esc(q.error_type)}</span>${q.fix ? `<div class="small">Fix: ${esc(q.fix)}</div>` : ""}` })),
     ...h.mistakes.map((m) => ({ date: m.logged_on, kind: "m", html: `<b>Mistake logged</b>: ${esc(m.what_wrong)} ${m.retest_passed ? `<span class="pill good">✓ retest passed ${fmtDate(m.passed_on)}</span>` : m.retest_on ? `<span class="pill">retest ${fmtDate(m.retest_on)}</span>` : ""}` })),
@@ -275,17 +281,18 @@ async function openChapter(id) {
       <button class="ghost close-x" data-action="close-drawer" aria-label="Close">✕</button>
       <div class="muted small">${esc(c.strand)} · ${esc(c.book)} · Chapter ${c.ch_num} · ${esc(c.level)}</div>
       <h1 style="margin:4px 0 10px">${esc(c.title)}</h1>
-      <div class="chip-row" style="margin-bottom:12px">${taughtPill(c.taught)}${c.due ? dueReason(c) : ""}<span class="pill">Term: ${c.terms.map(esc).join(" & ")}</span></div>
+      <div class="chip-row" style="margin-bottom:12px">${learntPill(c)}${c.due ? dueReason(c) : ""}</div>
       <p class="small muted" style="margin-top:0">${esc(c.sections)}</p>
-      <button class="primary" data-action="review" data-id="${c.id}">✓ Reviewed today</button>
+      ${actionButton(c, true)}
       <div class="card section">
         <dl class="kv">
+          <dt>First learnt</dt><dd><input type="date" data-change="first-learnt" data-id="${c.id}" value="${c.first_learnt || ""}" max="${S.boot.today}" aria-label="First learnt date"> <span class="small muted">${c.learnt ? relDays(-c.days_since_learnt) : "pick a past date if you learnt it before using the app"}</span></dd>
           <dt>Confidence</dt><dd>${confBadge(c.confidence)} ${c.confidence ? CONF_LABEL[c.confidence] : "Not rated yet"}</dd>
           <dt>Last reviewed</dt><dd>${c.last_reviewed ? `${fmtDate(c.last_reviewed)} (${c.days_since === 0 ? "today" : plural(c.days_since, "day") + " ago"})` : "Never"}</dd>
-          <dt>Next review</dt><dd>${c.next_review ? `${fmtDate(c.next_review)} (${relDays(c.days_until_review)})` : "—"}</dd>
+          <dt>Next review</dt><dd>${c.next_review ? `${fmtDate(c.next_review)} (${relDays(c.days_until_review)})` : c.learnt ? "Rate your confidence to schedule it" : "Scheduled once you've learnt it"}</dd>
           <dt>Reviews logged</dt><dd>${c.review_count}</dd>
           <dt>Marks lost in papers</dt><dd>${c.marks_lost}${c.top_error ? ` · most common error: <b>${esc(c.top_error)}</b>` : ""}</dd>
-          <dt>Priority</dt><dd>${prioBadge(c.priority)} <span class="small muted">confidence ${parts.confidence} · overdue ${parts.overdue} · marks ${parts.marks} · taught ${parts.taught}</span></dd>
+          <dt>Priority</dt><dd>${prioBadge(c.priority)} <span class="small muted">confidence ${parts.confidence} · overdue ${parts.overdue} · marks ${parts.marks} · learnt ${parts.learnt}</span></dd>
         </dl>
       </div>
       <div class="card section">
@@ -297,7 +304,7 @@ async function openChapter(id) {
         <label class="field" style="margin-top:10px">Notes <textarea data-change="notes" data-id="${c.id}" placeholder="Anything to remember about this chapter… (saves automatically)">${esc(c.notes)}</textarea></label>
       </div>
       <div class="section"><h2>History</h2>
-        ${events.length ? `<ul class="timeline">${events.map((e) => `<li class="${e.kind}"><div class="when">${fmtDate(e.date, false)} ${fmtDate(e.date).slice(-4)}</div>${e.html}</li>`).join("")}</ul>` : `<div class="empty">No reviews yet. Press <b>Reviewed today</b> after you revise this chapter.</div>`}
+        ${events.length ? `<ul class="timeline">${events.map((e) => `<li class="${e.kind}"><div class="when">${fmtDate(e.date, false)} ${fmtDate(e.date).slice(-4)}</div>${e.html}</li>`).join("")}</ul>` : `<div class="empty">Nothing yet. Press <b>Learnt today</b> when you first learn this chapter.</div>`}
       </div>
     </aside>`;
   S.drawerId = id;
@@ -307,26 +314,30 @@ function closeDrawer() { $("#drawer-root").innerHTML = ""; S.drawerId = null; }
 
 // ------------------------------------------------------------------ review modal
 
-function openReview(id) {
+// mode "review" (Reviewed today) or "learnt" (Learnt today): both stamp today's date and
+// ask for a confidence rating, which sets when the next review is due.
+function openReview(id, mode = "review") {
   const c = chapterById(id); if (!c) return;
-  let chosen = c.confidence || null;
+  if (mode === "learnt" && c.learnt) mode = "review";
+  const learning = mode === "learnt";
+  let chosen = learning ? null : c.confidence || null;
   const iv = S.boot.settings.intervals;
   $("#modal-root").innerHTML = `<div class="backdrop modal-backdrop" data-action="close-modal"></div>
-    <div class="modal" role="dialog" aria-label="Log review">
+    <div class="modal" role="dialog" aria-label="${learning ? "Learnt today" : "Log review"}">
       <button class="ghost close-x" data-action="close-modal" aria-label="Close">✕</button>
-      <div class="muted small">Reviewed today · ${fmtDate(S.boot.today)}</div>
+      <div class="muted small">${learning ? "★ Learnt today" : "Reviewed today"} · ${fmtDate(S.boot.today)}</div>
       <h2 style="margin:4px 0 2px">${esc(c.title)}</h2>
-      <div class="muted small">How confident are you now? Press <kbd>1</kbd>–<kbd>5</kbd>, then <kbd>Enter</kbd>.</div>
+      <div class="muted small">How confident are you ${learning ? "with it" : "now"}? Press <kbd>1</kbd>–<kbd>5</kbd>, then <kbd>Enter</kbd>.</div>
       <div class="conf-picker">${[1, 2, 3, 4, 5].map((n) => `<button data-conf="${n}"><b>${n}</b><span>${CONF_LABEL[n]}</span></button>`).join("")}</div>
       <div class="small muted" id="next-preview">&nbsp;</div>
-      <label class="field" style="margin-top:10px">Note (optional)<textarea id="review-note" placeholder="What did you do? e.g. Ex 4B + 5 exam Qs"></textarea></label>
-      <div class="form-row" style="justify-content:flex-end;margin-top:12px"><button data-action="close-modal">Cancel</button><button class="primary" id="review-save" disabled>Log review</button></div>
+      ${learning ? "" : `<label class="field" style="margin-top:10px">Note (optional)<textarea id="review-note" placeholder="What did you do? e.g. Ex 4B + 5 exam Qs"></textarea></label>`}
+      <div class="form-row" style="justify-content:flex-end;margin-top:12px"><button data-action="close-modal">Cancel</button><button class="primary" id="review-save" disabled>${learning ? "Mark as learnt" : "Log review"}</button></div>
     </div>`;
   const pick = (n) => {
     chosen = n;
     $$(".conf-picker button").forEach((b) => b.classList.toggle("chosen", +b.dataset.conf === n));
     $("#review-save").disabled = false;
-    $("#next-preview").textContent = `Next review in ${plural(iv[n], "day")}: ${fmtDate(addDays(S.boot.today, iv[n]), false)}`;
+    $("#next-preview").textContent = `${learning ? "First review" : "Next review"} in ${plural(iv[n], "day")}: ${fmtDate(addDays(S.boot.today, iv[n]), false)}`;
   };
   if (chosen) pick(chosen);
   $$(".conf-picker button").forEach((b) => b.addEventListener("click", () => pick(+b.dataset.conf)));
@@ -334,9 +345,10 @@ function openReview(id) {
     if (!chosen) return;
     $("#review-save").disabled = true;
     try {
-      await api("POST", `/api/chapters/${id}/review`, { confidence: chosen, note: $("#review-note").value.trim() });
+      if (learning) await api("POST", `/api/chapters/${id}/learnt`, { confidence: chosen });
+      else await api("POST", `/api/chapters/${id}/review`, { confidence: chosen, note: $("#review-note").value.trim() });
       closeModal();
-      toast(`Logged review · next in ${plural(iv[chosen], "day")}`);
+      toast(`${learning ? "Marked as learnt" : "Logged review"} · ${learning ? "first review" : "next"} in ${plural(iv[chosen], "day")}`);
       await afterChange(id);
     } catch (e) { toast(e.message, "error"); $("#review-save").disabled = false; }
   };
@@ -361,35 +373,39 @@ async function afterChange(chapterId) {
 
 async function renderDashboard(main) {
   const d = await api("GET", "/api/dashboard");
-  const sch = d.schedule;
+  const pace = d.pace;
   const next = d.countdown.find((e) => e.days >= 0);
   const pct = (a, b) => (b ? Math.round((100 * a) / b) : 0);
   const progRow = (g) => `<tr><td><b>${esc(g.name)}</b></td><td class="num">${g.chapters}</td>
-      ${["summary_done", "exercises_done", "examq_done"].map((k) => `<td><div style="display:flex;gap:8px;align-items:center"><div class="progress" style="flex:1"><i style="width:${pct(g[k], g.chapters)}%"></i></div><span class="num small">${g[k]}/${g.chapters}</span></div></td>`).join("")}
+      ${["learnt", "summary_done", "exercises_done", "examq_done"].map((k) => `<td><div style="display:flex;gap:8px;align-items:center"><div class="progress" style="flex:1"><i style="width:${pct(g[k], g.chapters)}%"></i></div><span class="num small">${g[k]}/${g.chapters}</span></div></td>`).join("")}
       <td class="num">${g.avg_confidence ?? "—"}</td><td class="num">${g.weak || "—"}</td><td class="num">${g.due || "—"}</td></tr>`;
-  const progTable = (rows, first) => `<div class="table-wrap"><table class="compact"><thead><tr><th>${first}</th><th>Chapters</th><th>Summary</th><th>Exercises</th><th>Exam Qs</th><th>Avg conf</th><th>Conf 1–2</th><th>Due</th></tr></thead><tbody>${rows.map(progRow).join("")}</tbody></table></div>`;
+  const progTable = (rows, first) => `<div class="table-wrap"><table class="compact"><thead><tr><th>${first}</th><th>Chapters</th><th>Learnt</th><th>Summary</th><th>Exercises</th><th>Exam Qs</th><th>Avg conf</th><th>Conf 1–2</th><th>Due</th></tr></thead><tbody>${rows.map(progRow).join("")}</tbody></table></div>`;
 
   main.innerHTML = `<div class="page-head"><h1>Dashboard</h1><span class="muted">${fmtDate(d.today)}</span></div>
     <div class="grid cols-4">
       <div class="card stat"><div class="label">Next exam</div>${next ? `<div class="big">${next.days}<span style="font-size:14px;font-weight:600"> days</span></div><div class="sub">${esc(next.name)} · ${fmtDate(next.date)}${next.confirmed ? "" : " (estimated)"}</div>` : `<div class="big">—</div><div class="sub">Add exam dates in Settings</div>`}</div>
-      <div class="card stat"><div class="label">School schedule</div><div class="big" style="color:var(${sch.verdict === "behind" ? "--bad" : sch.verdict === "ahead" ? "--good" : "--text"})">${sch.diff > 0 ? "+" : ""}${sch.diff}</div><div class="sub">${sch.verdict === "on track" ? "On track" : sch.verdict === "ahead" ? `Ahead by ${Math.abs(sch.diff)} chapters` : `Behind by ${Math.abs(sch.diff)} chapters`} · ${sch.covered} done vs ${sch.expected} expected</div></div>
+      <div class="card stat"><div class="label">Learnt so far</div><div class="big">${pace.learnt}<span style="font-size:14px;font-weight:600"> / ${pace.total}</span></div><div class="sub">${paceLine(pace)}</div></div>
       <div class="card stat"><div class="label">Review streak</div><div class="big">🔥 ${d.streak}</div><div class="sub">${plural(d.reviews_this_week, "review")} this week · ${d.reviews_total} total</div></div>
       <div class="card stat"><div class="label">Overdue now</div><div class="big" style="color:var(${d.due_count ? "--bad" : "--text"})">${d.due_count}</div><div class="sub">chapters due · ${plural(d.open_retests, "open retest")}</div></div>
     </div>
 
     <div class="grid cols-2 section">
-      <div class="card"><h2>Ahead or behind school?</h2>
-        <p class="small muted" style="margin-top:0">A chapter counts as covered when its <b>Exercises</b> are Done. Expected = chapters school should have finished by today (current term pro-rated).</p>
-        <table class="compact"><thead><tr><th>Term</th><th></th><th>Chapters</th><th>Covered</th><th>Expected</th><th>±</th></tr></thead><tbody>
-        ${sch.per_term.map((t) => `<tr><td><b>${esc(t.term)}</b></td><td>${t.state === "current" ? `<span class="pill info">now</span>` : t.state === "finished" ? `<span class="pill">done</span>` : `<span class="pill">upcoming</span>`}</td><td class="num">${t.chapters}</td><td class="num">${t.covered}</td><td class="num">${t.expected}</td>
-          <td class="num">${t.state === "upcoming" ? "—" : `<span class="pill ${t.diff >= 0 ? "good" : "bad"}">${t.diff >= 0 ? "▲ +" : "▼ "}${t.diff}</span>`}</td></tr>`).join("")}
-        </tbody></table></div>
+      <div class="card"><h2>Learning pace</h2>
+        <p class="small muted" style="margin-top:0">Your pace over the last 4 weeks compared with the pace you need to learn every chapter by <b>${pace.target ? fmtDate(pace.target) : "—"}</b> (change this in Settings).</p>
+        <div class="hero ${pace.verdict === "behind" ? "bad" : pace.verdict === "ahead" || pace.verdict === "all learnt" ? "good" : ""}">${PACE_LABEL[pace.verdict]}</div>
+        <dl class="kv" style="margin-top:10px">
+          <dt>Learnt</dt><dd>${pace.learnt} of ${pace.total} chapters · ${pace.remaining} to go</dd>
+          <dt>This week</dt><dd>${plural(pace.this_week, "chapter")}</dd>
+          <dt>Your pace</dt><dd>${pace.per_week} chapters/week <span class="small muted">(${pace.recent} in the last 4 weeks)</span></dd>
+          <dt>Needed</dt><dd>${pace.required_per_week !== null ? pace.required_per_week + " chapters/week" : "—"}${pace.days_left !== null && pace.days_left > 0 ? ` <span class="small muted">(${plural(pace.days_left, "day")} left)</span>` : ""}</dd>
+          <dt>Projected finish</dt><dd>${pace.projected_finish ? fmtDate(pace.projected_finish) : pace.remaining ? "— (learn a few chapters to see this)" : "Done!"}</dd>
+        </dl></div>
       <div class="card"><h2>Exam countdown</h2>
         <table class="compact"><tbody>${d.countdown.map((e) => `<tr><td>${esc(e.name)}</td><td class="small">${fmtDate(e.date)}${e.confirmed ? "" : ` <span class="pill warn" title="Placeholder — update in Settings when OCR publishes the timetable">est.</span>`}</td><td class="num"><b>${e.days >= 0 ? plural(e.days, "day") : "done"}</b></td></tr>`).join("") || `<tr><td class="muted">No exams set — add them in Settings.</td></tr>`}</tbody></table></div>
     </div>
 
     <div class="section"><h2>Progress by strand</h2>${progTable(d.by_strand, "Strand")}</div>
-    <div class="section"><h2>Progress by term</h2><p class="small muted" style="margin:-4px 0 8px">Chapters taught across two terms count in both.</p>${progTable(d.by_term, "Term")}</div>
+    <div class="section"><h2>Progress by book</h2>${progTable(d.by_book, "Book")}</div>
 
     <div class="grid cols-2 section">
       <div class="card"><h2>Top 10 weakest chapters</h2>
@@ -401,6 +417,13 @@ async function renderDashboard(main) {
           <td>${p.average !== null && p.a_star_percent !== null ? `<span class="pill ${p.average >= p.a_star_percent ? "good" : "bad"}">${p.average >= p.a_star_percent ? "▲ +" : "▼ "}${(p.average - p.a_star_percent).toFixed(1)}</span>` : "—"}</td></tr>`).join("")}
         </tbody></table></div>
     </div>`;
+}
+
+const PACE_LABEL = { "ahead": "▲ Ahead of pace", "on track": "● On track", "behind": "▼ Behind pace", "not started": "Not started yet", "all learnt": "✓ Everything learnt", "no target": "Set a target date" };
+function paceLine(p) {
+  if (p.verdict === "all learnt") return "Every chapter learnt";
+  if (p.required_per_week === null) return `${p.per_week}/week recently`;
+  return `${PACE_LABEL[p.verdict]} · ${p.per_week}/week vs ${p.required_per_week}/week needed`;
 }
 
 // ------------------------------------------------------------------ charts
@@ -586,7 +609,7 @@ async function renderSettings(main) {
 
     <form class="card" data-settings="priority"><h2>Priority score</h2>
       <p class="small muted" style="margin-top:0">Relative weights of each part of the 0–100 score used to sort the due list.</p>
-      <div class="form-row">${[["confidence", "Low confidence"], ["overdue", "How overdue"], ["marks", "Marks lost"], ["taught", "Taught by school"]].map(([k, l]) => `<label class="field">${l}<input type="number" min="0" step="1" name="${k}" value="${s.priority_weights[k]}" style="width:90px"></label>`).join("")}
+      <div class="form-row">${[["confidence", "Low confidence"], ["overdue", "How overdue"], ["marks", "Marks lost"], ["learnt", "Learnt yet"]].map(([k, l]) => `<label class="field">${l}<input type="number" min="0" step="1" name="${k}" value="${s.priority_weights[k]}" style="width:90px"></label>`).join("")}
         <label class="field" title="Marks lost at which the marks part reaches half weight">Marks half-point<input type="number" min="1" step="1" name="marks_half_point" value="${s.marks_half_point}" style="width:90px"></label></div>
       <div class="form-row" style="margin-top:10px"><button class="primary">Save</button><button type="button" class="ghost small" data-reset="priority_weights,marks_half_point">Reset</button></div></form>
 
@@ -594,11 +617,6 @@ async function renderSettings(main) {
       <p class="small muted" style="margin-top:0">Placeholders until OCR publishes the June 2028 timetable. Tick "confirmed" once you have the real date.</p>
       <div id="exam-rows">${s.exams.map((e) => examRow(e)).join("")}</div>
       <div class="form-row" style="margin-top:10px"><button type="button" class="small" data-action="add-exam">+ Add exam</button><div style="flex:1"></div><button class="primary">Save</button></div></form>
-
-    <form class="card" data-settings="terms"><h2>School terms</h2>
-      <p class="small muted" style="margin-top:0">Used for "taught yet?" and ahead/behind. A chapter counts as taught once its term has ended.</p>
-      ${s.terms.map((t, i) => `<div class="form-row" style="margin-bottom:6px"><label class="field" style="width:120px">${i === 0 ? "Term" : ""}<input value="${esc(t.name)}" disabled></label><label class="field">${i === 0 ? "Starts" : ""}<input type="date" name="start-${i}" value="${t.start}" required></label><label class="field">${i === 0 ? "Ends" : ""}<input type="date" name="end-${i}" value="${t.end}" required></label></div>`).join("")}
-      <div class="form-row" style="margin-top:10px"><button class="primary">Save</button><button type="button" class="ghost small" data-reset="terms">Reset</button></div></form>
 
     <form class="card" data-settings="papers"><h2>Papers &amp; max marks</h2>
       <p class="small muted" style="margin-top:0">H240 papers are 100 marks each (OCR spec). Y540–Y543 default to 75 — check against the H245 specification.</p>
@@ -610,6 +628,8 @@ async function renderSettings(main) {
         <label class="field">Theme<select name="theme">${["system", "light", "dark"].map((t) => `<option ${s.theme === t ? "selected" : ""}>${t}</option>`).join("")}</select></label>
         <label class="field">Open in<select name="open_in"><option value="app_window" ${s.open_in === "app_window" ? "selected" : ""}>App window (Chrome/Edge)</option><option value="browser" ${s.open_in === "browser" ? "selected" : ""}>Default browser tab</option></select></label>
         <label class="field">Mistake retest gap (days)<input type="number" min="1" max="365" name="mistake_retest_days" value="${s.mistake_retest_days}" style="width:90px"></label>
+        <label class="field" title="Used for the learning pace on the Dashboard">Learn every chapter by<input type="date" name="learn_by" value="${s.learn_by || ""}"></label>
+        <span class="small muted" style="padding-bottom:8px">blank = your first exam</span>
       </div>
       <div class="form-row" style="margin-top:10px"><button class="primary">Save</button></div></form>
   </div>
@@ -661,11 +681,10 @@ async function saveSettingsForm(form) {
   const s = S.boot.settings, kind = form.dataset.settings, fd = new FormData(form);
   let body;
   if (kind === "intervals") body = { intervals: Object.fromEntries([1, 2, 3, 4, 5].map((n) => [String(n), parseInt(fd.get(String(n)), 10)])) };
-  if (kind === "priority") body = { priority_weights: Object.fromEntries(["confidence", "overdue", "marks", "taught"].map((k) => [k, Number(fd.get(k))])), marks_half_point: Number(fd.get("marks_half_point")) };
+  if (kind === "priority") body = { priority_weights: Object.fromEntries(["confidence", "overdue", "marks", "learnt"].map((k) => [k, Number(fd.get(k))])), marks_half_point: Number(fd.get("marks_half_point")) };
   if (kind === "exams") body = { exams: $$(".exam-row", form).map((r) => ({ name: $("[name=exam-name]", r).value.trim(), date: $("[name=exam-date]", r).value, confirmed: $("[name=exam-confirmed]", r).checked })) };
-  if (kind === "terms") body = { terms: s.terms.map((t, i) => ({ name: t.name, start: fd.get(`start-${i}`), end: fd.get(`end-${i}`) })) };
   if (kind === "papers") body = { papers: s.papers.map((p, i) => ({ code: p.code, name: fd.get(`name-${i}`), max: Number(fd.get(`max-${i}`)) })) };
-  if (kind === "general") body = { theme: fd.get("theme"), open_in: fd.get("open_in"), mistake_retest_days: parseInt(fd.get("mistake_retest_days"), 10) };
+  if (kind === "general") body = { theme: fd.get("theme"), open_in: fd.get("open_in"), mistake_retest_days: parseInt(fd.get("mistake_retest_days"), 10), learn_by: fd.get("learn_by") || null };
   S.boot.settings = await guard(() => api("PUT", "/api/settings", body));
   applyTheme(); await loadChapters(); toast("Settings saved");
 }
@@ -688,11 +707,12 @@ document.addEventListener("click", async (e) => {
   switch (a) {
     case "open": return openChapter(id);
     case "review": return openReview(id);
+    case "learnt": return openReview(id, "learnt");
     case "close-drawer": return closeDrawer();
     case "close-modal": return closeModal();
     case "theme": return cycleTheme();
     case "help": return openHelp();
-    case "clear-filters": S.filters = { q: "", strand: "", book: "", term: "", status: "" }; return render();
+    case "clear-filters": S.filters = { q: "", strand: "", book: "", status: "" }; return render();
     case "del-review":
       if (!confirm("Delete this review from the history?")) return;
       await guard(() => api("DELETE", `/api/reviews/${id}`)); toast("Review removed"); return afterChange(S.drawerId);
@@ -739,6 +759,11 @@ document.addEventListener("change", async (e) => {
   const id = Number(el.dataset.id);
   if (kind === "status") { await guard(() => api("PATCH", `/api/chapters/${id}`, { [el.dataset.field]: el.value })); el.className = `st-${el.value}`; return softRefresh(id); }
   if (kind === "confidence") { await guard(() => api("PATCH", `/api/chapters/${id}`, { confidence: el.value ? Number(el.value) : null })); return softRefresh(id); }
+  if (kind === "first-learnt") {
+    try { await api("PATCH", `/api/chapters/${id}`, { first_learnt: el.value || null }); toast(el.value ? "First learnt date saved" : "Marked as not learnt"); }
+    catch (err) { toast(err.message, "error"); }
+    return softRefresh(id);
+  }
   if (kind === "notes") { await guard(() => api("PATCH", `/api/chapters/${id}`, { notes: el.value })); toast("Notes saved"); return loadChapters(); }
   if (kind === "retest-date") { await guard(() => api("PATCH", `/api/mistakes/${id}`, { retest_on: el.value || null })); toast("Retest date updated"); return render(); }
   if (kind === "passed") { await guard(() => api("POST", `/api/mistakes/${id}/retest`, { passed: el.checked })); if (!el.checked) toast("Marked not passed — retest rescheduled"); return render(); }
@@ -768,7 +793,7 @@ function highlightSelection(scroll = true) {
 function selectedId() { const r = rows()[S.sel]; return r && r.dataset.id ? Number(r.dataset.id) : null; }
 
 function openHelp() {
-  const keys = [["1 – 6", "Go to Due / Chapters / Dashboard / Papers / Mistakes / Settings"], ["j / k or ↓ / ↑", "Move selection"], ["r", "Reviewed today (selected chapter)"], ["Enter or o", "Open chapter history"], ["1 – 5 then Enter", "Set confidence in the review dialog"], ["/", "Search chapters"], ["n", "New paper attempt / mistake (on those pages)"], ["t", "Toggle dark mode"], ["Esc", "Close dialog / panel"], ["?", "This help"]];
+  const keys = [["1 – 6", "Go to Due / Chapters / Dashboard / Papers / Mistakes / Settings"], ["j / k or ↓ / ↑", "Move selection"], ["l", "Learnt today (selected chapter)"], ["r", "Reviewed today (selected chapter)"], ["Enter or o", "Open chapter history"], ["1 – 5 then Enter", "Set confidence in the review dialog"], ["/", "Search chapters"], ["n", "New paper attempt / mistake (on those pages)"], ["t", "Toggle dark mode"], ["Esc", "Close dialog / panel"], ["?", "This help"]];
   $("#modal-root").innerHTML = `<div class="backdrop modal-backdrop" data-action="close-modal"></div><div class="modal" role="dialog" aria-label="Keyboard shortcuts">
     <button class="ghost close-x" data-action="close-modal" aria-label="Close">✕</button><h2>Keyboard shortcuts</h2>
     <table class="compact shortcuts"><tbody>${keys.map(([k, v]) => `<tr><td><kbd>${k}</kbd></td><td>${v}</td></tr>`).join("")}</tbody></table></div>`;
@@ -789,6 +814,7 @@ document.addEventListener("keydown", (e) => {
     case "j": case "ArrowDown": if (S.drawerId) return; S.sel++; highlightSelection(); e.preventDefault(); return;
     case "k": case "ArrowUp": if (S.drawerId) return; S.sel--; highlightSelection(); e.preventDefault(); return;
     case "r": { const id = S.drawerId || selectedId(); if (id) { openReview(id); e.preventDefault(); } return; }
+    case "l": { const id = S.drawerId || selectedId(); if (id) { openReview(id, "learnt"); e.preventDefault(); } return; }
     case "Enter": case "o": { if (S.drawerId || e.target.closest("button, a, summary")) return; const id = selectedId(); if (id) { openChapter(id); e.preventDefault(); } return; }
     case "/": if (S.route !== "chapters") { location.hash = "#/chapters"; setTimeout(() => $("#ch-search")?.focus(), 150); } else $("#ch-search").focus(); e.preventDefault(); return;
     case "n": { const f = $("#paper-form [name=series]") || $("#mistake-form [name=chapter_id]"); if (f) { f.focus(); e.preventDefault(); } return; }

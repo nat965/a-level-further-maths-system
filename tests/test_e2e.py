@@ -4,6 +4,7 @@ browser. Skipped automatically if Playwright isn't installed (it's a dev-only ex
 
 Set E2E_SCREENSHOTS=/some/folder to save a screenshot of every page.
 """
+import json
 import os
 import shutil
 import socket
@@ -54,7 +55,17 @@ class EndToEnd(unittest.TestCase):
                 time.sleep(0.2)
         else:
             raise RuntimeError("app did not start")
+        # Some chapters learnt before "today" (2027-01-10), as if back-filled in the app.
+        for cid in range(1, 9):  # confidence 3 -> first review 14 days later -> overdue now
+            cls.patch(cid, {"first_learnt": "2026-12-01", "confidence": 3})
+        cls.patch(9, {"first_learnt": "2027-01-09"})  # learnt yesterday, not rated yet -> due
         cls.shots = os.environ.get("E2E_SCREENSHOTS")
+
+    @classmethod
+    def patch(cls, cid, body):
+        req = urllib.request.Request(f"{cls.url}api/chapters/{cid}", data=json.dumps(body).encode(),
+                                     method="PATCH", headers={"Content-Type": "application/json"})
+        urllib.request.urlopen(req).read()
 
     @classmethod
     def tearDownClass(cls):
@@ -85,13 +96,15 @@ class EndToEnd(unittest.TestCase):
             page.on("pageerror", lambda e: errors.append(str(e)))
             page.on("dialog", lambda d: d.accept())
 
-            # --- Home: Due today (Autumn Y12 has ended by 2027-01-10, nothing reviewed yet)
+            # --- Home: Due today = the 9 chapters learnt before today
             page.goto(self.url)
             page.wait_for_selector(".due-item")
             self.assertIn("#/due", page.url)
-            n_due = page.locator(".due-list .due-item").count()
-            self.assertEqual(n_due, 28)  # 30 Autumn Y12 chapters minus 2 that run on into Spring
-            self.assertEqual(page.locator("#due-badge").inner_text(), str(n_due))
+            due_cards = "#review-section .due-item"
+            n_due = page.locator(due_cards).count()
+            self.assertEqual(n_due, 9)
+            self.assertEqual(page.locator("#due-badge").inner_text(), "9")
+            self.assertIn("rate your confidence", page.locator(".due-item[data-id='9']").inner_text())
             first_title = page.locator(".due-item .t").first.inner_text()
             first_id = page.locator(".due-item").first.get_attribute("data-id")
             self.shot(page, "01-due")
@@ -105,13 +118,26 @@ class EndToEnd(unittest.TestCase):
             self.shot(page, "02-review-modal")
             page.keyboard.press("Enter")
             page.wait_for_selector(".toast")
-            page.wait_for_function(f"document.querySelectorAll('.due-list .due-item').length === {n_due - 1}")
-            self.assertEqual(page.locator(f".due-item[data-id='{first_id}']").count(), 0)
+            page.wait_for_function(f"document.querySelectorAll('{due_cards}').length === {n_due - 1}")
+            self.assertEqual(page.locator(f"{due_cards}[data-id='{first_id}']").count(), 0)
+
+            # --- Next to learn: one per book; Learnt today asks for confidence
+            nxt = "#learn-section .due-item"
+            self.assertEqual(page.locator(nxt).count(), 6)
+            red = page.locator(nxt, has_text="Maths Y1 (red) ch 10")
+            red.locator("button[data-action=learnt]").click()
+            page.wait_for_selector(".modal:has-text('Learnt today')")
+            page.keyboard.press("4")
+            self.assertIn("First review in 30 days", page.locator("#next-preview").inner_text())
+            page.keyboard.press("Enter")
+            page.wait_for_selector(".toast:has-text('Marked as learnt')")
+            page.wait_for_selector(f"{nxt}:has-text('Maths Y1 (red) ch 11')")
 
             # --- Chapters: search, filter, sort, inline status, drawer timeline
             page.keyboard.press("2")
             page.wait_for_selector("#ch-table tbody tr")
             self.assertEqual(page.locator("#ch-table tbody tr").count(), 80)
+            self.assertEqual(page.locator("select[data-filter=term]").count(), 0)  # school terms gone
             page.keyboard.press("/")
             page.keyboard.type("polar")
             page.wait_for_function("document.querySelectorAll('#ch-table tbody tr').length === 1")
@@ -119,15 +145,16 @@ class EndToEnd(unittest.TestCase):
             page.select_option("select[data-filter=strand]", "Further Mechanics")
             self.assertEqual(page.locator("#ch-table tbody tr").count(), 10)
             page.select_option("select[data-filter=strand]", "")
-            page.select_option("select[data-filter=term]", "Spring Y13")
-            self.assertEqual(page.locator("#ch-table tbody tr").count(), 6)
-            page.select_option("select[data-filter=term]", "")
+            page.select_option("select[data-filter=status]", "not_learnt")
+            self.assertEqual(page.locator("#ch-table tbody tr").count(), 70)
             page.select_option("select[data-filter=status]", "never")
-            self.assertEqual(page.locator("#ch-table tbody tr").count(), 79)
+            self.assertEqual(page.locator("#ch-table tbody tr").count(), 9)
             page.select_option("select[data-filter=status]", "")
             page.click("th[data-sort=priority]")
             prios = [float(t) for t in page.locator("#ch-table tbody .prio").all_inner_texts()]
             self.assertEqual(prios, sorted(prios, reverse=True))
+            page.click("th[data-sort=first_learnt]")
+            self.assertIn("1 Dec 2026", page.locator("#ch-table tbody tr").first.inner_text())
             row = page.locator("#ch-table tbody tr", has_text="Indices and surds")
             row.locator("select[data-field=exercises_status]").select_option("done")
             page.wait_for_timeout(300)
@@ -136,13 +163,23 @@ class EndToEnd(unittest.TestCase):
             self.shot(page, "03-chapters")
             page.click(f"#ch-table a[data-action=open][data-id='{first_id}']")
             page.wait_for_selector(".drawer .timeline li")
-            self.assertIn("Reviewed", page.locator(".drawer .timeline").inner_text())
+            timeline = page.locator(".drawer .timeline").inner_text()
+            self.assertIn("Reviewed", timeline)
+            self.assertIn("First learnt", timeline)
             page.fill(".drawer textarea[data-change=notes]", "Remember the proof by exhaustion template")
             page.locator(".drawer h1").click()  # blur -> autosave
             page.wait_for_selector(".toast:has-text('Notes saved')")
             self.shot(page, "04-drawer")
             page.keyboard.press("Escape")
             self.assertEqual(page.locator(".drawer").count(), 0)
+
+            # back-fill a first-learnt date from the chapter panel
+            page.click("#ch-table a[data-action=open]:text-is('Hyperbolic functions')")
+            page.wait_for_selector(".drawer:has-text('Not learnt yet')")
+            page.fill(".drawer input[data-change=first-learnt]", "2026-12-20")
+            page.wait_for_selector(".toast:has-text('First learnt date saved')")
+            page.wait_for_selector(".drawer:has-text('Learnt 20 Dec 2026')")
+            page.keyboard.press("Escape")
 
             # --- Past papers: log an attempt and a question breakdown, then boundaries
             page.keyboard.press("4")
@@ -200,8 +237,10 @@ class EndToEnd(unittest.TestCase):
             page.wait_for_selector("text=Top 10 weakest chapters")
             body = page.locator("main").inner_text()
             self.assertIn("review streak", body.lower())
-            self.assertIn("Ahead or behind school?", body)
-            self.assertIn("Behind by", body)
+            self.assertIn("Learning pace", body)
+            self.assertIn("learnt so far", body.lower())
+            self.assertIn("Progress by book", body)
+            self.assertNotIn("school", body.lower())
             self.assertIn("Complex numbers", page.locator(".card:has-text('Top 10 weakest')").inner_text())
             self.assertIn("1 review this week", body)
             self.shot(page, "07-dashboard")

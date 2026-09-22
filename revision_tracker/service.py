@@ -1,5 +1,4 @@
 """Application operations: combine stored rows with the calculations in logic.py."""
-import json
 from collections import Counter, defaultdict
 from datetime import datetime, timedelta
 
@@ -15,7 +14,7 @@ class NotFound(Exception):
 
 def _chapter_row(row):
     c = dict(row)
-    c["terms"] = json.loads(c["terms"])
+    c.pop("terms", None)  # school teaching terms are no longer used
     return c
 
 
@@ -47,19 +46,21 @@ def list_chapters(store, today):
 
 
 def enrich(c, last_on, n_reviews, marks_lost, top_error, settings, today):
-    taught = logic.taught_status(c["terms"], settings["terms"], today)
-    due, _ = logic.is_due(last_on, c["confidence"], taught, settings["intervals"], today)
-    nxt = logic.next_review(last_on, c["confidence"], settings["intervals"])
-    pr = logic.priority(c["confidence"], last_on, taught, marks_lost, settings, today)
+    learnt = c["first_learnt"] is not None
+    anchor = logic.schedule_anchor(last_on, c["first_learnt"])
+    due, _ = logic.is_due(anchor, c["confidence"], learnt, settings["intervals"], today)
+    nxt = logic.next_review(anchor, c["confidence"], settings["intervals"]) if learnt else None
+    pr = logic.priority(c["confidence"], anchor, learnt, marks_lost, settings, today)
     return {
         **c,
+        "learnt": learnt,
+        "days_since_learnt": logic.days_since(c["first_learnt"], today),
         "last_reviewed": last_on,
         "review_count": n_reviews,
         "days_since": logic.days_since(last_on, today),
         "next_review": logic.iso(nxt),
         "days_until_review": None if nxt is None else (nxt - today).days,
         "due": due,
-        "taught": taught,
         "marks_lost": round(marks_lost, 1),
         "top_error": top_error,
         "priority": pr["score"],
@@ -89,13 +90,52 @@ def update_chapter(store, chapter_id, data, today):
         fields["confidence"] = v
     if "notes" in data:
         fields["notes"] = str(data["notes"])
+    if "first_learnt" in data:
+        fields["first_learnt"] = data["first_learnt"]
     if not fields:
         raise ValueError("Nothing to update")
     with store.tx() as con:
+        if "first_learnt" in fields:
+            fields["first_learnt"] = _check_first_learnt(con, chapter_id, fields["first_learnt"], today)
         cur = con.execute(f"UPDATE chapters SET {', '.join(k + ' = ?' for k in fields)} WHERE id = ?",
                           [*fields.values(), chapter_id])
         if cur.rowcount == 0:
             raise NotFound("chapter")
+    return get_chapter(store, chapter_id, today)
+
+
+def _check_first_learnt(con, chapter_id, value, today):
+    first_review = con.execute("SELECT MIN(reviewed_on) FROM reviews WHERE chapter_id = ?",
+                               (chapter_id,)).fetchone()[0]
+    if value in (None, ""):
+        if first_review:
+            raise ValueError("You've already reviewed this chapter, so it can't be marked as not learnt. "
+                             "Undo its reviews first.")
+        return None
+    try:
+        d = logic.parse_date(value)
+    except ValueError:
+        raise ValueError("First learnt must be a date")
+    if d > today:
+        raise ValueError("First learnt can't be in the future")
+    if first_review and d.isoformat() > first_review:
+        raise ValueError(f"First learnt must be on or before your first review ({first_review})")
+    return d.isoformat()
+
+
+def mark_learnt(store, chapter_id, confidence, today):
+    """'Learnt today': stamp today's date as the day you first learnt it, with a confidence
+    rating that sets when the first review is due."""
+    if not isinstance(confidence, int) or not 1 <= confidence <= 5:
+        raise ValueError("confidence must be 1-5")
+    with store.tx() as con:
+        row = con.execute("SELECT first_learnt FROM chapters WHERE id = ?", (chapter_id,)).fetchone()
+        if row is None:
+            raise NotFound("chapter")
+        if row["first_learnt"]:
+            raise ValueError(f"Already marked as learnt on {row['first_learnt']}")
+        con.execute("UPDATE chapters SET first_learnt = ?, confidence = ? WHERE id = ?",
+                    (today.isoformat(), confidence, chapter_id))
     return get_chapter(store, chapter_id, today)
 
 
@@ -112,6 +152,9 @@ def review_chapter(store, chapter_id, confidence, note, today):
                     (chapter_id, today.isoformat(), row["confidence"], confidence, note or "",
                      datetime.now().isoformat(timespec="seconds")))
         con.execute("UPDATE chapters SET confidence = ? WHERE id = ?", (confidence, chapter_id))
+        # Reviewing a chapter you hadn't marked as learnt means you've learnt it by now.
+        con.execute("UPDATE chapters SET first_learnt = ? WHERE id = ? AND first_learnt IS NULL",
+                    (today.isoformat(), chapter_id))
     return get_chapter(store, chapter_id, today)
 
 
@@ -161,13 +204,13 @@ def due_list(store, today):
     upcoming = sorted((c for c in everything
                        if not c["due"] and c["days_until_review"] is not None and c["days_until_review"] <= 7),
                       key=lambda c: c["days_until_review"])
-    # When little is due: the highest-priority chapters school has started but that
-    # have no review scheduled yet (never reviewed).
-    suggested = sorted((c for c in everything if not c["due"] and c["last_reviewed"] is None
-                        and c["taught"] != "not_yet"),
-                       key=lambda c: (-c["priority"], c["sort_order"]))
+    # Next chapter to learn in each book (book order), for when little is due.
+    next_up = {}
+    for c in sorted(everything, key=lambda c: c["sort_order"]):
+        if not c["learnt"] and c["book"] not in next_up:
+            next_up[c["book"]] = c
     return {"chapters": chapters, "retests": retests, "upcoming": upcoming[:10],
-            "suggested": suggested[:5]}
+            "next_to_learn": list(next_up.values())}
 
 
 # ---------------------------------------------------------------- papers
@@ -494,6 +537,7 @@ def dashboard(store, today):
                 "summary_done": sum(c["summary_status"] == "done" for c in cs),
                 "exercises_done": sum(c["exercises_status"] == "done" for c in cs),
                 "examq_done": sum(c["examq_status"] == "done" for c in cs),
+                "learnt": sum(c["learnt"] for c in cs),
                 "avg_confidence": round(sum(rated) / len(rated), 1) if rated else None,
                 "weak": sum(1 for r in rated if r <= 2),
                 "due": sum(c["due"] for c in cs),
@@ -506,8 +550,8 @@ def dashboard(store, today):
     return {
         "today": today.isoformat(),
         "by_strand": group(lambda c: [c["strand"]], strands),
-        "by_term": group(lambda c: c["terms"], [t["name"] for t in settings["terms"]]),
-        "schedule": logic.schedule_position(chapters, settings["terms"], today),
+        "by_book": group(lambda c: [c["book"]], list(dict.fromkeys(c["book"] for c in chapters))),
+        "pace": logic.learning_pace([c["first_learnt"] for c in chapters], today, logic.learn_target(settings)),
         "weakest": [{k: c[k] for k in ("id", "title", "strand", "book", "ch_num", "confidence",
                                        "marks_lost", "top_error", "weakness", "priority")}
                     for c in weakest],
