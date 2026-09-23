@@ -330,7 +330,7 @@ async function openChapter(id) {
       ${actionButton(c, true)}
       <div class="card section">
         <dl class="kv">
-          <dt>First learnt</dt><dd><input type="date" data-change="first-learnt" data-id="${c.id}" value="${c.first_learnt || ""}" max="${S.boot.today}" aria-label="First learnt date"> <span class="small muted">${c.learnt ? relDays(-c.days_since_learnt) : "pick a past date if you learnt it before using the app"}</span></dd>
+          <dt>First learnt</dt><dd><input type="date" data-change="first-learnt" data-id="${c.id}" value="${c.first_learnt || ""}" max="${S.boot.today}" aria-label="First learnt date"> <span class="small muted">${c.learnt ? relDays(-c.days_since_learnt) : "pick a past date if you learnt it before using this site"}</span></dd>
           <dt>Confidence</dt><dd>${confBadge(c.confidence)} ${c.confidence ? CONF_LABEL[c.confidence] : "Not rated yet"}</dd>
           <dt>Last reviewed</dt><dd>${c.last_reviewed ? `${fmtDate(c.last_reviewed)} (${c.days_since === 0 ? "today" : plural(c.days_since, "day") + " ago"})` : "Never"}</dd>
           <dt>Next review</dt><dd>${c.next_review ? `${fmtDate(c.next_review)} (${relDays(c.days_until_review)})` : c.learnt ? "Rate your confidence to schedule it" : "Scheduled once you've learnt it"}</dd>
@@ -686,7 +686,7 @@ async function renderSettings(main) {
       <button data-action="export-csv">Export CSV (zip of tables)</button>
     </div>
     <h3 class="section">Import</h3>
-    <p class="small muted" style="margin-top:0">Works with exports from this site and from the old desktop app. The server keeps a backup first, so you can undo an import from the list below.</p>
+    <p class="small muted" style="margin-top:0">Works with exports from this site and from the old desktop app. A backup is kept first, so you can undo an import from the list below.</p>
     <div class="form-row">
       <label class="field">Import JSON export (replaces all data)<input type="file" accept=".json,application/json" id="import-json"></label>
       <label class="field">Import CSV into table<select id="import-table">${S.boot.tables.map((t) => `<option>${t}</option>`).join("")}</select></label>
@@ -704,7 +704,8 @@ async function renderSettings(main) {
     let doc;
     try { doc = svc.normalize(JSON.parse(await file.text())); } catch (err) { toast(err instanceof SyntaxError ? "That file isn't valid JSON" : err.message, "error"); e.target.value = ""; return; }
     if (!confirm(`Replace ALL your data with this file (${doc.chapters.length} chapters, ${doc.reviews.length} reviews, ${doc.papers.length} papers, ${doc.mistakes.length} mistakes)?`)) { e.target.value = ""; return; }
-    await S.tracker.flush();
+    try { await S.tracker.flush(); await S.tracker.remote.backupNow(S.tracker.code); }
+    catch (err) { toast(`Import cancelled: couldn't back up your current data first (${err.message})`, "error"); e.target.value = ""; return; }
     S.tracker.replace(doc);
     toast("Import complete"); await reloadAll();
   });
@@ -713,6 +714,8 @@ async function renderSettings(main) {
     const table = $("#import-table").value;
     const rows = parseCSV(await file.text());
     if (!confirm(`Replace the whole "${table}" table with the ${rows.length} rows in this CSV?`)) { e.target.value = ""; return; }
+    try { await S.tracker.flush(); await S.tracker.remote.backupNow(S.tracker.code); }
+    catch (err) { toast(`Import cancelled: couldn't back up your current data first (${err.message})`, "error"); e.target.value = ""; return; }
     try { S.tracker.apply((d) => svc.replaceTable(d, table, rows)); } catch (err) { toast(err.message, "error"); e.target.value = ""; return; }
     toast(`Imported ${rows.length} rows into ${table}`); await reloadAll();
   });
@@ -746,7 +749,7 @@ async function loadBackups() {
     if (!el.isConnected) return;
     el.classList.remove("muted", "small");
     el.innerHTML = list.length ? `<div class="table-wrap"><table class="compact"><thead><tr><th>Saved</th><th>Kind</th><th>Size</th><th></th></tr></thead><tbody>${list.map((b) =>
-      `<tr><td class="small">${esc(new Date(b.saved_at).toLocaleString("en-GB", { dateStyle: "medium", timeStyle: "short" }))}</td><td class="small">${b.kind === "daily" ? "Start of day" : "Before a restore"}</td><td class="small num">${Math.max(1, Math.round(b.size / 1024))} KB</td><td><button class="small" data-action="restore" data-backup="${b.id}" data-when="${esc(new Date(b.saved_at).toLocaleString("en-GB", { dateStyle: "medium", timeStyle: "short" }))}">Restore</button></td></tr>`).join("")}</tbody></table></div>`
+      `<tr><td class="small">${esc(new Date(b.saved_at).toLocaleString("en-GB", { dateStyle: "medium", timeStyle: "short" }))}</td><td class="small">${{ daily: "Start of day", "pre-restore": "Before a restore", "pre-import": "Before an import" }[b.kind] || esc(b.kind)}</td><td class="small num">${Math.max(1, Math.round(b.size / 1024))} KB</td><td><button class="small" data-action="restore" data-backup="${b.id}" data-when="${esc(new Date(b.saved_at).toLocaleString("en-GB", { dateStyle: "medium", timeStyle: "short" }))}">Restore</button></td></tr>`).join("")}</tbody></table></div>`
       : `<span class="muted small">No backups yet. The first one is made the first time you save something on a new day.</span>`;
   } catch (e) {
     if (el.isConnected) el.textContent = `Couldn't load backups: ${e.message}`;

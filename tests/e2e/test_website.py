@@ -347,6 +347,9 @@ class Website(unittest.TestCase):
         page.set_input_files("#import-json", str(tmp))
         page.wait_for_selector(".toast:has-text('Import complete')")
         self.wait_saved(page)
+        page.click("a[data-nav=due]")
+        page.click("a[data-nav=settings]")
+        page.wait_for_selector("#backup-list td:has-text('Before an import')")
         page.keyboard.press("1")
         page.wait_for_selector("#review-section .due-item")
         # chapter 2 was reviewed on 11 Nov at confidence 2 -> due 18 Nov -> overdue on 10 Jan

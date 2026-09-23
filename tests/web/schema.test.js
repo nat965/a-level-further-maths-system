@@ -93,6 +93,17 @@ test("old daily backups are pruned after 14 days, and the site is capped at 500 
   assert.match(await be.rpc("create_tracker", { p_data: doc() }), /^\w{4}-\w{4}-\w{4}$/);
 });
 
+test("a backup can be taken on demand (before imports)", async () => {
+  const code = await be.rpc("create_tracker", { p_data: doc({ n: 7 }) });
+  await be.rpc("backup_tracker", { p_code: code });
+  const [b] = await be.rpc("list_backups", { p_code: code });
+  assert.equal(b.kind, "pre-import");
+  await be.rpc("save_tracker", { p_code: code, p_data: doc({ n: 8 }), p_version: 1 });
+  await be.rpc("restore_backup", { p_code: code, p_backup_id: b.id });
+  assert.equal((await be.rpc("load_tracker", { p_code: code })).data.n, 7);
+  await assert.rejects(be.rpc("backup_tracker", { p_code: "ZZZZ-ZZZZ-ZZZZ" }), /tracker_not_found/);
+});
+
 test("the public role can't touch the tables directly, only the functions", async () => {
   await be.rpc("create_tracker", { p_data: doc() });
   for (const sql of ["select * from public.trackers", "select * from public.tracker_backups",

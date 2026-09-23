@@ -45,6 +45,7 @@ export class Remote {
     return r.version;
   }
   listBackups(code) { return this.call("list_backups", { p_code: code }); }
+  backupNow(code) { return this.call("backup_tracker", { p_code: code }); }
   restoreBackup(code, id) { return this.call("restore_backup", { p_code: code, p_backup_id: id }); }
 }
 

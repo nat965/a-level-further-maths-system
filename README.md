@@ -27,7 +27,7 @@ If you lose your connection, keep the tab open: your changes save when you're ba
 
 ## Backups, export and import
 
-- **Automatic backups:** the server keeps a copy of your tracker from the start of each day you use it, for 14 days. It also keeps one before every restore. Restore any of them from *Settings → Backups*.
+- **Automatic backups:** the server keeps a copy of your tracker from the start of each day you use it, for 14 days. It also keeps one before every import and restore. Restore any of them from *Settings → Backups*.
 - **Export:** *Settings → Export JSON* downloads everything as one file. *Export CSV* downloads a zip with one spreadsheet-friendly file per table.
 - **Import:** *Import JSON* replaces your tracker with an export. This also works with files from the old desktop app, so you can move your data across. *Import CSV* replaces one table.
 

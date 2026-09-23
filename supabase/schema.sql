@@ -22,11 +22,14 @@ create table if not exists public.trackers (
 create table if not exists public.tracker_backups (
   id         bigserial primary key,
   code_hash  text not null references public.trackers(code_hash) on delete cascade,
-  kind       text not null check (kind in ('daily', 'pre-restore')),
+  kind       text not null,
   day        date not null,
   data       jsonb not null,
   saved_at   timestamptz not null default now()
 );
+alter table public.tracker_backups drop constraint if exists tracker_backups_kind_check;
+alter table public.tracker_backups add constraint tracker_backups_kind_check
+  check (kind in ('daily', 'pre-restore', 'pre-import'));
 create unique index if not exists tracker_backups_one_daily
   on public.tracker_backups (code_hash, day) where kind = 'daily';
 
@@ -139,6 +142,22 @@ as $$
   from public.tracker_backups where code_hash = public.rt_hash(p_code)
 $$;
 
+-- Keeps a copy of the tracker as it is right now (the website calls this before an import).
+create or replace function public.backup_tracker(p_code text) returns void
+language plpgsql security definer
+set search_path = public, extensions
+as $$
+declare
+  v_hash text := public.rt_hash(p_code);
+begin
+  insert into public.tracker_backups (code_hash, kind, day, data)
+    select v_hash, 'pre-import', current_date, data from public.trackers where code_hash = v_hash;
+  if not found then
+    raise exception 'tracker_not_found';
+  end if;
+end
+$$;
+
 -- Restores a backup (the current state is kept as a 'pre-restore' backup first).
 create or replace function public.restore_backup(p_code text, p_backup_id bigint) returns integer
 language plpgsql security definer
@@ -168,4 +187,5 @@ grant execute on function public.create_tracker(jsonb) to anon, authenticated;
 grant execute on function public.load_tracker(text) to anon, authenticated;
 grant execute on function public.save_tracker(text, jsonb, integer) to anon, authenticated;
 grant execute on function public.list_backups(text) to anon, authenticated;
+grant execute on function public.backup_tracker(text) to anon, authenticated;
 grant execute on function public.restore_backup(text, bigint) to anon, authenticated;

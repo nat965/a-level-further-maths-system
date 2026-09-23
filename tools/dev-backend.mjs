@@ -13,6 +13,7 @@ const RPC = {
   load_tracker: { p_code: "text" },
   save_tracker: { p_code: "text", p_data: "jsonb", p_version: "integer" },
   list_backups: { p_code: "text" },
+  backup_tracker: { p_code: "text" },
   restore_backup: { p_code: "text", p_backup_id: "bigint" },
 };
 
