@@ -67,7 +67,7 @@ describe("chapters", () => {
     const c14 = ch(d, "14");
     assert.deepEqual([c14.first_learnt, c14.next_review, c14.due, c14.due_count, c14.confidence], ["2027-01-01", "2027-01-08", true, 1, 3.3]);
     assert.deepEqual(c14.subtopics.map((x) => x.next_review), ["2027-01-08", "2027-03-02", "2027-01-15"]);
-    assert.throws(() => S.markLearnt(d, "13", { "13.1": 3 }, T), /Rate every subtopic/);
+    assert.throws(() => S.markLearnt(d, "13", {}, T), /Tick at least one/);
     assert.throws(() => S.markLearnt(d, "15", 2, T, "2027-02-01"), /future/);
     assert.throws(() => S.markLearnt(d, "15", 2, T, "soon"), /isn't a date/);
     assert.equal(ch(d, "12", "2027-01-24").due, true);
@@ -172,6 +172,76 @@ describe("subtopics", () => {
     S.deleteSubtopic(d, "new");
     assert.throws(() => S.deleteSubtopic(d, "2.2"), /at least one subtopic/);
     assert.throws(() => S.addSubtopic(d, "999", "x"), /Chapter not found/);
+  });
+});
+
+describe("first learnt, per subtopic", () => {
+  test("learn a chapter a few subtopics at a time, each with its own date", () => {
+    const d = fresh();
+    S.markLearnt(d, "3", { "3.1": 3, "3.2": 4 }, T, "02/01/2027");
+    let c = ch(d, "3");
+    assert.deepEqual([c.learnt, c.started, c.learnt_count, c.first_learnt], [false, true, 2, null]);
+    assert.deepEqual(c.subtopics.map((x) => x.first_learnt), ["2027-01-02", "2027-01-02", null, null, null, null]);
+    assert.deepEqual([c.subtopics[0].next_review, c.subtopics[1].next_review, c.subtopics[2].due], ["2027-01-16", "2027-02-01", false]);
+    // still "next to learn" until every subtopic is learnt
+    S.markLearnt(d, "1", 3, T);
+    S.markLearnt(d, "2", 3, T);
+    assert.ok(S.dueList(d, T).next_to_learn.some((x) => x.id === "3"));
+    assert.throws(() => S.markLearnt(d, "3", { "3.1": 3 }, T), /already learnt/);
+    // a number rates the rest
+    S.markLearnt(d, "3", 2, T, "05/01/2027");
+    c = ch(d, "3");
+    // once they're all learnt the chapter takes the earliest date, and the rest keep their own
+    assert.deepEqual([c.learnt, c.first_learnt, c.learnt_count], [true, "2027-01-02", 6]);
+    assert.deepEqual(d.subtopics.filter((x) => x.chapter_id === "3").map((x) => x.first_learnt),
+      [null, null, "2027-01-05", "2027-01-05", "2027-01-05", "2027-01-05"]);
+    assert.deepEqual(c.subtopics.map((x) => x.own_date), [false, false, true, true, true, true]);
+    assert.equal(c.subtopics[3].next_review, "2027-01-12");
+    assert.throws(() => S.markLearnt(d, "3", 2, T), /Already marked/);
+  });
+
+  test("change one subtopic's date, or put it back to the chapter's", () => {
+    const d = fresh();
+    S.markLearnt(d, "7", 3, T, "2027-01-01");
+    S.setSubtopicLearnt(d, "7.3", "08/01/2027", T);
+    let c = ch(d, "7");
+    assert.deepEqual([c.subtopics[2].first_learnt, c.subtopics[2].next_review, c.subtopics[0].next_review], ["2027-01-08", "2027-01-22", "2027-01-15"]);
+    // setting it to the chapter's date is the same as inheriting it
+    S.setSubtopicLearnt(d, "7.3", "2027-01-01", T);
+    assert.equal(d.subtopics.find((x) => x.id === "7.3").first_learnt, null);
+    S.setSubtopicLearnt(d, "7.3", "2027-01-04", T);
+    S.setSubtopicLearnt(d, "7.3", "", T);
+    assert.equal(ch(d, "7").subtopics[2].first_learnt, "2027-01-01");
+    assert.throws(() => S.setSubtopicLearnt(d, "7.3", "2027-02-01", T), /future/);
+    // changing the chapter's date moves the subtopics that use it
+    S.setSubtopicLearnt(d, "7.4", "2027-01-06", T);
+    S.updateChapter(d, "7", { first_learnt: "2026-12-20" }, T);
+    assert.deepEqual(ch(d, "7").subtopics.map((x) => x.first_learnt), ["2026-12-20", "2026-12-20", "2026-12-20", "2027-01-06"]);
+  });
+
+  test("reviews can't be before a subtopic was learnt; reviewing an unlearnt one learns it", () => {
+    const d = fresh();
+    S.markLearnt(d, "4", 3, T, "2027-01-01");
+    S.setSubtopicLearnt(d, "4.2", "2027-01-06", T);
+    assert.throws(() => S.reviewSubtopics(d, "4", { "4.2": 3 }, "", T, { on: "2027-01-05" }), /before you first learnt Polynomial division/);
+    S.reviewSubtopics(d, "4", { "4.1": 3 }, "", T, { on: "2027-01-05", reviewId: "r" });
+    assert.throws(() => S.updateReview(d, "r:4.1", { reviewed_on: "2026-12-31" }, T), /before you first learnt Working with polynomials/);
+    // an unlearnt chapter: reviewing some subtopics learns just those, on the review date
+    S.reviewSubtopics(d, "5", { "5.2": 4 }, "", T, { on: "2027-01-07" });
+    const c = ch(d, "5");
+    assert.deepEqual([c.learnt, c.learnt_count, c.subtopics[1].first_learnt, c.subtopics[1].next_review], [false, 1, "2027-01-07", "2027-02-06"]);
+    // it can't be un-learnt while it has reviews
+    assert.throws(() => S.setSubtopicLearnt(d, "5.2", "", T), /already reviewed/);
+  });
+
+  test("per-subtopic dates survive JSON and CSV", async () => {
+    const { docToCSVs, parseCSV } = await import("../../web/js/files.js");
+    const d = fresh();
+    S.markLearnt(d, "2", { "2.2": 4 }, T, "2027-01-03");
+    assert.deepEqual(S.normalize(JSON.parse(JSON.stringify(d))), d);
+    const copy = fresh();
+    S.replaceTable(copy, "subtopics", parseCSV(docToCSVs(d)["subtopics.csv"]));
+    assert.deepEqual(copy.subtopics, d.subtopics);
   });
 });
 
@@ -461,10 +531,39 @@ describe("question bank", () => {
     assert.deepEqual([copy.chapters, copy.subtopics, copy.reviews], [d.chapters, d.subtopics, d.reviews]);
   });
 
+  test("a question can be on one subtopic of its chapter", () => {
+    const d = fresh();
+    S.createBankQuestion(d, { chapter_id: "3", subtopic_id: "3.3", title: "CTS", files: [img("f1")] }, T, { id: "q1" });
+    S.createBankQuestion(d, { chapter_id: "3", title: "Mixed", files: [img("f2")] }, T, { id: "q2" });
+    let [a, b] = ["q1", "q2"].map((id) => S.getBankQuestion(d, id, T));
+    assert.deepEqual([a.subtopic_id, a.subtopic_title, a.subtopic_num, b.subtopic_id, b.subtopic_title], ["3.3", "Completing the square", 3, null, null]);
+    const c = ch(d, "3");
+    assert.deepEqual([c.question_count, c.subtopics[2].question_count, c.subtopics[0].question_count], [2, 1, 0]);
+    assert.throws(() => S.createBankQuestion(d, { chapter_id: "3", subtopic_id: "4.1", files: [img("x")] }, T), /isn't in this question's chapter/);
+    // move between subtopics, back to the whole chapter, and to another chapter
+    S.updateBankQuestion(d, "q1", { subtopic_id: "3.4" });
+    assert.equal(d.questions[0].subtopic_id, "3.4");
+    S.updateBankQuestion(d, "q1", { subtopic_id: "" });
+    assert.equal(d.questions[0].subtopic_id, null);
+    S.updateBankQuestion(d, "q1", { subtopic_id: "3.5" });
+    assert.throws(() => S.updateBankQuestion(d, "q1", { subtopic_id: "7.1" }), /isn't in/);
+    S.updateBankQuestion(d, "q1", { chapter_id: "7" }); // its old subtopic doesn't apply any more
+    assert.deepEqual([d.questions[0].chapter_id, d.questions[0].subtopic_id], ["7", null]);
+    S.updateBankQuestion(d, "q1", { chapter_id: "3", subtopic_id: "3.6" });
+    assert.equal(d.questions[0].subtopic_id, "3.6");
+    // deleting the subtopic keeps the question in the chapter
+    S.deleteSubtopic(d, "3.6");
+    assert.deepEqual([d.questions.length, d.questions[0].chapter_id, d.questions[0].subtopic_id], [2, "3", null]);
+    // bad references in a file are refused
+    const broken = JSON.parse(JSON.stringify(d));
+    broken.questions[0].subtopic_id = "5.1";
+    assert.throws(() => S.normalize(broken), /pointing at chapters/);
+  });
+
   test("questions survive JSON and CSV round trips; old trackers without questions still load", async () => {
     const { docToCSVs, parseCSV } = await import("../../web/js/files.js");
     const d = fresh();
-    S.createBankQuestion(d, { chapter_id: "2", title: 'Surds, "rationalise"', files: [img("f1")], solution_files: [pdf("s1")] }, T, { id: "q" });
+    S.createBankQuestion(d, { chapter_id: "2", subtopic_id: "2.2", title: 'Surds, "rationalise"', files: [img("f1")], solution_files: [pdf("s1")] }, T, { id: "q" });
     S.createMistake(d, { question_id: "q", what_wrong: "w" }, T, { id: "m" });
     assert.deepEqual(S.normalize(JSON.parse(JSON.stringify(d))), d);
     const csv = docToCSVs(d);

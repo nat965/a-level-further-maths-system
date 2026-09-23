@@ -311,3 +311,8 @@ table.sub-rate td.next { white-space: nowrap; min-width: 6.5em; }
 @media (max-width: 700px) {
   .rate button { width: 26px; }
 }
+.btn-pair { display: inline-flex; gap: 6px; flex-wrap: wrap; }
+.inherited input[type=text] { color: var(--muted); font-style: italic; }
+.sub-learnt { align-items: center; gap: 10px; margin: 6px 10px 4px !important; }
+.sub-learnt .field { flex-direction: row; align-items: center; gap: 8px; }
+.sub-qs .q-grid { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); }

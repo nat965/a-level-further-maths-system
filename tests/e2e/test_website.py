@@ -412,9 +412,11 @@ class Website(unittest.TestCase):
         (tmp / "question.png").write_bytes(make_png(3000, 1800))
         (tmp / "paper.pdf").write_bytes(make_pdf())
         (tmp / "solution.png").write_bytes(make_png(600, 400))
-        page.click(".drawer button[data-action=add-question]")
+        page.click(".drawer button[data-action=add-question]:not([data-sub])")
         page.wait_for_selector("#upload-form")
         self.assertEqual(page.locator("#upload-form [name=chapter_id] option:checked").inner_text(), "Maths Y1 (red) 3: Quadratic functions")
+        self.assertEqual(page.locator("#upload-form [name=subtopic_id] option:checked").inner_text(), "Whole chapter (no one subtopic)")
+        page.select_option("#upload-form [name=subtopic_id]", label="3.3 Completing the square")
         page.fill("#upload-form [name=title]", "Ex 3E Q7")
         page.fill("#upload-form [name=source]", "Textbook")
         page.set_input_files("#upload-form [name=files]", [str(tmp / "question.png"), str(tmp / "paper.pdf")])
@@ -424,6 +426,7 @@ class Website(unittest.TestCase):
         page.click("#upload-go")
         page.wait_for_selector(".viewer")
         self.assertEqual(page.input_value(".viewer .title-input"), "Ex 3E Q7")
+        self.assertIn("3.3 Completing the square", page.inner_text(".viewer"))
         page.wait_for_function("[...document.querySelectorAll('.viewer [data-src-file]')].every(e => e.src.startsWith('blob:'))")
         self.assertEqual(page.locator(".viewer .q-file").count(), 3)
         self.assertEqual(page.locator(".viewer iframe.pdf").count(), 1)
@@ -446,7 +449,13 @@ class Website(unittest.TestCase):
         self.shot(page, "11-question")
         page.keyboard.press("Escape")
         page.wait_for_selector(".viewer", state="detached")
-        page.wait_for_selector(".drawer .q-card:has-text('Ex 3E Q7')")
+        page.wait_for_selector("#drawer-questions .q-card:has-text('Ex 3E Q7')")
+        # it's listed under its subtopic too
+        cts = page.locator(".drawer details.sub", has_text="Completing the square")
+        self.assertIn("1 question", cts.locator(".sub-meta").inner_text())
+        cts.locator("summary .sub-name").click()
+        self.assertEqual(cts.locator(".q-card").count(), 1)
+        self.assertEqual(page.locator(".drawer details.sub", has_text="The discriminant").locator(".q-card").count(), 0)
         page.keyboard.press("Escape")
 
         # --- the Questions page and the Mistakes page link up
@@ -455,6 +464,14 @@ class Website(unittest.TestCase):
         self.assertEqual(page.locator(".q-card").count(), 1)
         page.wait_for_function("document.querySelector('.q-card img')?.src.startsWith('blob:')")
         self.assertIn("Partly right", page.inner_text(".q-card"))
+        self.assertIn("› 3.3 Completing the square", page.inner_text(".q-card"))
+        # filter by chapter, then subtopic
+        page.select_option("select[data-qfilter=chapter]", label="Maths Y1 (red) 3: Quadratic functions")
+        page.select_option("select[data-qfilter=subtopic]", label="3.5 The discriminant")
+        page.wait_for_selector(".empty:has-text('No questions match')")
+        page.select_option("select[data-qfilter=subtopic]", label="3.3 Completing the square")
+        page.wait_for_selector(".q-card")
+        page.select_option("select[data-qfilter=chapter]", "")
         self.shot(page, "12-question-bank")
         page.keyboard.press("5")
         page.wait_for_selector("td:has-text('Sign error when factorising')")
@@ -554,7 +571,7 @@ class Website(unittest.TestCase):
         page.click("#ch-table a[data-action=open]:text-is('Quadratic functions')")
         self.assertIn("Reviewed 2 subtopics", page.inner_text(".drawer .timeline"))
         sub = page.locator(".drawer details.sub", has_text="Completing the square")
-        self.assertIn("Last reviewed 09/01/2027", sub.inner_text())
+        self.assertIn("last reviewed 09/01/2027", sub.inner_text())
         self.assertIn("next 23/01/2027", sub.inner_text())
         sub.locator("summary .sub-name").click()
         date = sub.locator("input[data-change=review-date]")
@@ -594,6 +611,66 @@ class Website(unittest.TestCase):
         page.wait_for_selector("#ch-table tr.sub-row.match")
         self.assertEqual(page.locator("#ch-table tr.ch-row").count(), 2)  # Quadratic functions, Using graphs
         self.assertEqual(page.locator("#ch-table tr.sub-row.match").count(), 2)
+        self.assertEqual(page.errors, [], page.errors)
+
+    def test_subtopic_learnt_dates(self):
+        page = self.new_page()
+        self.create_tracker(page)
+        page.click("#open-new")
+        page.wait_for_selector("#learn-section")
+        page.keyboard.press("2")
+        page.wait_for_selector("#ch-table tbody tr")
+        page.locator("#ch-table tr.ch-row[data-id='4']").locator("button[data-action=toggle-subs]").click()
+        row = lambda title: page.locator("#ch-table tr.sub-row", has_text=title)
+
+        # type a date for one subtopic: just that one is learnt (and needs rating)
+        row("Polynomial division").locator("input[data-change=sub-learnt]").fill("03/01/2027")
+        row("Polynomial division").locator("input[data-change=sub-learnt]").press("Enter")
+        page.wait_for_selector(".toast:has-text('Polynomial division: first learnt 03/01/2027')")
+        self.assertEqual(row("Polynomial division").locator("button[data-action=review-sub]").count(), 1)
+        self.assertEqual(row("The factor theorem").locator("button[data-action=learn-sub]").count(), 1)
+        chapter = page.locator("#ch-table tr.ch-row[data-id='4']")
+        self.assertEqual(chapter.locator("input[data-change=first-learnt]").input_value(), "")
+        self.assertEqual(chapter.locator("button[data-action=learnt]").count(), 1)  # the rest still to learn
+
+        # mark one more as learnt on another day
+        row("The factor theorem").locator("button[data-action=learn-sub]").click()
+        page.wait_for_selector(".modal .sub-rate")
+        self.assertEqual(page.locator(".sub-rate tbody tr").count(), 3)  # only the ones not learnt yet
+        self.assertEqual(page.locator(".sub-rate input.tick:checked").count(), 1)
+        page.fill("#review-on", "05/01/2027")
+        page.click(".rate.all button[data-all='4']")
+        page.click("#review-save")
+        page.wait_for_selector(".toast:has-text('Marked 1 subtopic as learnt')")
+
+        # then the rest, today
+        chapter.locator("button[data-action=learnt]").click()
+        page.wait_for_selector(".modal .sub-rate")
+        self.assertEqual(page.locator(".sub-rate tbody tr").count(), 2)
+        page.keyboard.press("3")
+        page.keyboard.press("Enter")
+        page.wait_for_selector(".toast:has-text('Marked 2 subtopics as learnt')")
+        self.wait_saved(page)
+        # the chapter takes the earliest date; the others keep their own
+        chapter = page.locator("#ch-table tr.ch-row[data-id='4']")
+        self.assertEqual(chapter.locator("input[data-change=first-learnt]").input_value(), "03/01/2027")
+        dates = {t: row(t).locator("input[data-change=sub-learnt]").input_value() for t in
+                 ("Working with polynomials", "Polynomial division", "The factor theorem", "Sketching polynomial functions")}
+        self.assertEqual(dates, {"Working with polynomials": "10/01/2027", "Polynomial division": "03/01/2027",
+                                 "The factor theorem": "05/01/2027", "Sketching polynomial functions": "10/01/2027"})
+        self.assertEqual(row("Polynomial division").locator(".inherited").count(), 1)  # same as the chapter
+        self.shot(page, "16-subtopic-learnt-dates")
+
+        # in the chapter panel: clear one subtopic's own date and it goes back to the chapter's
+        page.click("#ch-table a[data-action=open]:text-is('Polynomials')")
+        sub = page.locator(".drawer details.sub", has_text="The factor theorem")
+        self.assertIn("Learnt 05/01/2027", sub.locator(".sub-meta").inner_text())
+        sub.locator("summary .sub-name").click()
+        sub.locator("input[data-change=sub-learnt]").fill("")
+        sub.locator("input[data-change=sub-learnt]").press("Enter")
+        page.wait_for_selector(".toast:has-text('The factor theorem: first learnt 03/01/2027')")
+        sub = page.locator(".drawer details.sub", has_text="The factor theorem")
+        self.assertIn("Same as the chapter", sub.inner_text())
         self.assertEqual(page.errors, [], page.errors)
 
     def test_import_desktop_app_export(self):

@@ -49,7 +49,17 @@ If you lose your connection, keep the tab open: your changes save when you're ba
 
 Each chapter's subtopics are its textbook sections (for example, *Quadratic functions* has *Review of quadratic equations*, *Graphs of quadratic functions*, *Completing the square*, …). Sections marked **A only** are A-level only. You can rename, add or delete subtopics in the chapter's panel (*Edit list*).
 
-**Learnt** (★) appears on chapters you haven't learnt yet. Rate how confident you are with each subtopic: press `1`–`5` to rate them all, then change any that differ. Also set the date you learnt it: today unless you change it. Each subtopic's first review is scheduled from that date and its own rating.
+**Learnt** (★) appears on chapters you haven't fully learnt yet. It lists the subtopics you haven't learnt yet, all ticked.
+- **Pick what you learnt.** Untick any you haven't done yet: you can learn a chapter a few subtopics at a time.
+- **Rate each one.** Press `1`–`5` to rate them all, then change any that differ.
+- **Set the date.** It's today unless you change it.
+
+Each subtopic's first review is scheduled from its own date and rating. A single subtopic also has its own ★ *Learnt* button, in the Chapters table and in the chapter's panel.
+
+**When you first learnt each subtopic:**
+- **The chapter's date sets them all.** The *First learnt* date on a chapter applies to every subtopic that doesn't have its own date.
+- **Give one subtopic its own date** in its row of the Chapters table, or in the chapter's panel (open the subtopic). A date that matches the chapter's is shown greyed. Clear a subtopic's own date and it goes back to the chapter's.
+- **When the chapter counts as learnt.** A chapter counts as learnt (for your learning pace and *Next to learn*) once all its subtopics are. It then takes the earliest of their dates.
 
 **Review** is on every learnt chapter, and on each of its subtopics.
 - **Pick what you reviewed.** It opens with the subtopics that are due already ticked. Tick any others you went over, and rate each one 1–5 for how confident you are now. Rating a subtopic ticks it.
@@ -62,7 +72,7 @@ Each ticked subtopic gets its own dated review and its own next review.
 
 **Review history:** open a chapter and click a subtopic to see every review of it, with dates in dd/mm/yyyy. You can change a review's date there, or *Undo* it. The chapter's *History* shows each review session. *Undo* there removes the whole session.
 
-**Changing when you first learnt a chapter:** change the *First learnt* date at any time, in the Chapters table or in the chapter's panel. Subtopics you haven't reviewed since are rescheduled from the new date. Once a chapter has reviews, the date can still be changed but not cleared (undo its reviews first).
+**Changing when you first learnt a chapter:** change the *First learnt* date at any time, in the Chapters table or in the chapter's panel. Subtopics that use the chapter's date and haven't been reviewed since are rescheduled from the new date. Once a chapter has reviews, the date can still be changed but not cleared (undo its reviews first). A review can't be dated before its subtopic was learnt. Reviewing a subtopic you haven't marked as learnt marks it as learnt on the review date.
 
 **Trackers from before subtopics** upgrade automatically the first time you open them. Each old chapter review becomes a review of every subtopic in that chapter, with the same date and confidence, so nothing is lost. If you have the site open in another tab, reload it.
 
@@ -83,10 +93,15 @@ Each ticked subtopic gets its own dated review and its own next review.
 
 ### Question bank
 
-Every chapter has its own question bank. Add a question from the chapter's panel (*+ Add question*) or the **Questions** page:
+Every chapter has its own question bank, and a question can be on **one subtopic** or the whole chapter. Add a question from the chapter's panel: *+ Add question* for the chapter, or open a subtopic and use its own *+ Add question*. You can also add one from the **Questions** page:
 
 - **Upload the question** as photos (straight from your phone camera works) and/or PDFs. Big photos are shrunk before uploading so they're quick and still readable. Each file can be up to 10 MB.
+- Pick its **subtopic** (or leave it as the whole chapter). You can change it later in the question's view.
 - Give it a title and source (e.g. *Ex 3E Q7*, *June 2019 Y540 Q8*) and say how it went: not tried yet, wrong, partly right or right.
+- **Finding a subtopic's questions:**
+  - Its questions show under that subtopic in the chapter's panel.
+  - A subtopic with questions has a 📄 count in the Chapters table and in the due list. Click it to see them.
+  - On the Questions page, pick a chapter and then a subtopic to filter.
 - **Model solution:** attach photos/PDFs of the worked solution or mark scheme, and/or type it out. It stays hidden behind *Show model solution*, so you can redo the question first.
 - **Mistakes log:** log mistakes straight on the question (they appear in the Mistakes page too, with a link back), or link a mistake you'd already logged for that chapter. When a retest is due, the due list has an *Open question* button so you can redo the actual question.
 
@@ -98,13 +113,13 @@ Files are private to your tracker: they're stored in the same database and can o
 
 Everything below is worked out **for each subtopic**.
 
-**Next review** = the subtopic's last review date (or, if you haven't reviewed it yet, the date you first learnt the chapter) + the interval for its current confidence. The defaults are 1 → 3 days, 2 → 7, 3 → 14, 4 → 30, 5 → 60; you can change them in Settings. Its current confidence is the one from its latest review by date. A review you back-date to before a later one doesn't change it.
+**Next review** = the subtopic's last review date (or, if you haven't reviewed it yet, the date you first learnt it) + the interval for its current confidence. The defaults are 1 → 3 days, 2 → 7, 3 → 14, 4 → 30, 5 → 60; you can change them in Settings. Its current confidence is the one from its latest review by date. A review you back-date to before a later one doesn't change it.
 
-**Due** means you've learnt the chapter and either:
+**Due** means you've learnt the subtopic and either:
 - the subtopic's next review date is today or earlier, or
 - the subtopic hasn't been rated yet (for example, one you've just added), so it can be scheduled.
 
-Chapters you haven't learnt yet are never due.
+Subtopics you haven't learnt yet are never due.
 
 **Priority score (0–100)** is a weighted mix of four parts, and a chapter's priority is its most urgent subtopic's. The weights can be changed in Settings.
 

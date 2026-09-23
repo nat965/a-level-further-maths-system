@@ -46,7 +46,7 @@ export function defaultSubtopics(c, confidence = null) {
   if (!items.length) items = [c.title || "Whole chapter"];
   return items.map((item, i) => {
     const [title, aOnly] = Array.isArray(item) ? item : [item, 0];
-    return { id: `${c.id}.${i + 1}`, chapter_id: c.id, num: i + 1, title, a_only: Boolean(aOnly), confidence };
+    return { id: `${c.id}.${i + 1}`, chapter_id: c.id, num: i + 1, title, a_only: Boolean(aOnly), confidence, first_learnt: null };
   });
 }
 
@@ -75,7 +75,7 @@ export function normalize(raw) {
     })),
     subtopics: rows("subtopics").map((x, i) => ({
       id: String(x.id), chapter_id: String(x.chapter_id), num: num(x.num) ?? i + 1, title: String(x.title || "Untitled"),
-      a_only: truthy(x.a_only), confidence: num(x.confidence),
+      a_only: truthy(x.a_only), confidence: num(x.confidence), first_learnt: str(x.first_learnt),
     })),
     reviews: rows("reviews").map((r) => ({
       id: String(r.id), chapter_id: String(r.chapter_id), subtopic_id: str(r.subtopic_id), reviewed_on: String(r.reviewed_on).slice(0, 10),
@@ -101,7 +101,7 @@ export function normalize(raw) {
       passed_on: str(m.passed_on), question_id: str(m.question_id),
     })),
     questions: rows("questions").map((q) => ({
-      id: String(q.id), chapter_id: String(q.chapter_id), title: String(q.title || ""), source: String(q.source || ""),
+      id: String(q.id), chapter_id: String(q.chapter_id), subtopic_id: str(q.subtopic_id), title: String(q.title || ""), source: String(q.source || ""),
       added_on: String(q.added_on || "").slice(0, 10), status: BANK_STATUSES.includes(q.status) ? q.status : "not_tried",
       notes: String(q.notes || ""), files: fileList(q.files), solution_files: fileList(q.solution_files),
       solution_text: String(q.solution_text || ""),
@@ -126,12 +126,13 @@ export function normalize(raw) {
   doc.reviews = doc.reviews.flatMap((r) => (r.subtopic_id !== null ? [r]
     : subsOf[r.chapter_id] ? subsOf[r.chapter_id].map((x) => ({ ...r, id: `${r.id}:${x.id}`, subtopic_id: x.id })) : [r]));
   // anything reviewed was learnt by its first review
-  for (const c of doc.chapters) {
-    if (!c.first_learnt) {
-      const first = doc.reviews.filter((r) => r.chapter_id === c.id).map((r) => r.reviewed_on).sort()[0];
-      if (first) c.first_learnt = first;
-    }
+  const chById = Object.fromEntries(doc.chapters.map((c) => [c.id, c]));
+  for (const x of doc.subtopics) {
+    if (x.first_learnt || chById[x.chapter_id]?.first_learnt) continue;
+    const first = doc.reviews.filter((r) => r.subtopic_id === x.id).map((r) => r.reviewed_on).sort()[0];
+    if (first) x.first_learnt = first;
   }
+  for (const c of doc.chapters) tidyLearnt(doc, c);
   checkReferences(doc);
   return doc;
 }
@@ -157,7 +158,7 @@ function checkReferences(doc) {
   bad += doc.paper_questions.filter((q) => !pp.has(q.paper_id) || (q.chapter_id !== null && !ch.has(q.chapter_id))).length;
   bad += doc.mistakes.filter((m) => m.chapter_id !== null && !ch.has(m.chapter_id)).length;
   const qq = new Set(doc.questions.map((q) => q.id));
-  bad += doc.questions.filter((q) => !ch.has(q.chapter_id)).length;
+  bad += doc.questions.filter((q) => !ch.has(q.chapter_id) || (q.subtopic_id !== null && subs.get(q.subtopic_id)?.chapter_id !== q.chapter_id)).length;
   bad += doc.mistakes.filter((m) => m.question_id !== null && !qq.has(m.question_id)).length;
   for (const t of TABLES) if (new Set(doc[t].map((x) => x.id)).size !== doc[t].length) fail(`Duplicate ids in ${t}`);
   if (bad) fail(`That file has ${bad} rows pointing at chapters or papers that don't exist.`);
@@ -212,11 +213,17 @@ export function listChapters(doc, today) {
   const subs = subtopicsBy(doc);
   const { lost, top } = lossStats(doc);
   const qCount = {};
-  for (const q of doc.questions || []) qCount[q.chapter_id] = (qCount[q.chapter_id] || 0) + 1;
+  for (const q of doc.questions || []) {
+    qCount[q.chapter_id] = (qCount[q.chapter_id] || 0) + 1;
+    if (q.subtopic_id) qCount[q.subtopic_id] = (qCount[q.subtopic_id] || 0) + 1;
+  }
   return [...doc.chapters]
     .sort((a, b) => a.sort_order - b.sort_order)
-    .map((c) => ({ ...enrich(c, subs[c.id] || [], revs, lost[c.id] || 0, top[c.id] || null, settings, today),
-                   question_count: qCount[c.id] || 0 }));
+    .map((c) => {
+      const e = enrich(c, subs[c.id] || [], revs, lost[c.id] || 0, top[c.id] || null, settings, today);
+      for (const x of e.subtopics) x.question_count = qCount[x.id] || 0;
+      return { ...e, question_count: qCount[c.id] || 0 };
+    });
 }
 
 // Each subtopic has its own schedule: from its last review, or from the day the chapter was
@@ -225,14 +232,16 @@ export function listChapters(doc, today) {
 function enrichSubtopic(x, c, rv, marksLost, settings, today) {
   const last = rv.length ? rv[rv.length - 1] : null;
   const confidence = last ? last.confidence_after : x.confidence;
-  const learnt = Boolean(c.first_learnt);
+  const firstLearnt = learntOn(c, x);
+  const learnt = Boolean(firstLearnt);
   const lastOn = last ? last.reviewed_on : null;
-  const anchor = L.scheduleAnchor(lastOn, c.first_learnt);
+  const anchor = L.scheduleAnchor(lastOn, firstLearnt);
   const { due } = L.isDue(anchor, confidence, learnt, settings.intervals, today);
   const nxt = learnt ? L.nextReview(anchor, confidence, settings.intervals) : null;
   const pr = L.priority(confidence, anchor, learnt, marksLost, settings, today);
   return {
-    ...x, confidence, learnt, last_reviewed: lastOn, review_count: rv.length, days_since: L.daysSince(lastOn, today),
+    ...x, confidence, learnt, first_learnt: firstLearnt, own_date: Boolean(x.first_learnt), days_since_learnt: L.daysSince(firstLearnt, today),
+    last_reviewed: lastOn, review_count: rv.length, days_since: L.daysSince(lastOn, today),
     next_review: nxt, days_until_review: nxt === null ? null : L.daysBetween(today, nxt), due,
     needs_rating: learnt && confidence === null, overdue_days: due && nxt ? L.daysBetween(nxt, today) : due ? 0 : null,
     priority: pr.score, priority_parts: pr.components,
@@ -242,8 +251,9 @@ function enrichSubtopic(x, c, rv, marksLost, settings, today) {
 // A chapter sums up its subtopics: average confidence, earliest next review, due if any
 // subtopic is due, and the priority of its most urgent subtopic.
 function enrich(c, subList, revs, marksLost, topError, settings, today) {
-  const learnt = Boolean(c.first_learnt);
   const subtopics = subList.map((x) => enrichSubtopic(x, c, revs[x.id] || [], marksLost, settings, today));
+  const learntCount = subtopics.filter((x) => x.learnt).length;
+  const learnt = learntCount > 0 && learntCount === subtopics.length; // every subtopic learnt
   const rated = subtopics.map((x) => x.confidence).filter((v) => v !== null);
   const confidence = rated.length ? L.round(rated.reduce((a, b) => a + b, 0) / rated.length, 1) : null;
   const nexts = subtopics.map((x) => x.next_review).filter(Boolean).sort();
@@ -254,6 +264,8 @@ function enrich(c, subList, revs, marksLost, topError, settings, today) {
   return {
     ...c,
     learnt,
+    started: learntCount > 0,
+    learnt_count: learntCount,
     days_since_learnt: L.daysSince(c.first_learnt, today),
     subtopics,
     subtopic_count: subtopics.length,
@@ -308,14 +320,51 @@ function checkDate(value, what) {
   return d;
 }
 
-function checkFirstLearnt(doc, chapterId, value, today) {
-  if (value === null || value === undefined || value === "") {
-    if (doc.reviews.some((r) => r.chapter_id === chapterId)) fail("You've already reviewed this chapter, so it can't be marked as not learnt. Undo its reviews first.");
-    return null;
-  }
+// When each subtopic was first learnt: its own date, or else its chapter's. The chapter's date is
+// the quick way to set them all; a subtopic learnt on a different day keeps its own date.
+const learntOn = (c, x) => x.first_learnt || c.first_learnt || null;
+
+// Keep one way of writing the same thing: once every subtopic has a date, the chapter gets the
+// earliest, and subtopic dates that match the chapter's are dropped (they inherit it).
+function tidyLearnt(doc, c) {
+  const subs = doc.subtopics.filter((x) => x.chapter_id === c.id);
+  if (!c.first_learnt && subs.length && subs.every((x) => x.first_learnt)) c.first_learnt = subs.map((x) => x.first_learnt).sort()[0];
+  for (const x of subs) if (x.first_learnt && x.first_learnt === c.first_learnt) x.first_learnt = null;
+}
+
+// Mark subtopics as learnt on a day.
+function learnSubtopics(doc, c, subs, d) {
+  for (const x of subs) x.first_learnt = d;
+  tidyLearnt(doc, c);
+}
+
+function checkLearntDate(value, today) {
   const d = checkDate(value, "First learnt");
   if (d > today) fail("First learnt can't be in the future");
   return d;
+}
+
+function checkFirstLearnt(doc, chapterId, value, today) {
+  if (value === null || value === undefined || value === "") {
+    const inheriting = new Set(doc.subtopics.filter((x) => x.chapter_id === chapterId && !x.first_learnt).map((x) => x.id));
+    if (doc.reviews.some((r) => inheriting.has(r.subtopic_id))) fail("You've already reviewed this chapter, so it can't be marked as not learnt. Undo its reviews first.");
+    return null;
+  }
+  return checkLearntDate(value, today);
+}
+
+// Set (or clear) the day one subtopic was first learnt. Cleared, it goes back to the chapter's date.
+export function setSubtopicLearnt(doc, id, value, today) {
+  const x = subtopicOrFail(doc, id);
+  const c = chapterOrFail(doc, x.chapter_id);
+  if (value === null || value === undefined || value === "") {
+    if (!c.first_learnt && doc.reviews.some((r) => r.subtopic_id === x.id)) fail("You've already reviewed this subtopic, so it can't be marked as not learnt. Undo its reviews first.");
+    x.first_learnt = null;
+  } else {
+    x.first_learnt = checkLearntDate(value, today);
+  }
+  tidyLearnt(doc, c);
+  return doc;
 }
 
 export function updateChapter(doc, id, data, today) {
@@ -331,6 +380,7 @@ export function updateChapter(doc, id, data, today) {
   if ("first_learnt" in data) f.first_learnt = checkFirstLearnt(doc, c.id, data.first_learnt, today);
   if (!Object.keys(f).length) fail("Nothing to update");
   Object.assign(c, f);
+  if ("first_learnt" in f) tidyLearnt(doc, c);
   return doc;
 }
 
@@ -349,17 +399,21 @@ function ratingsFor(doc, c, confidence) {
   return out;
 }
 
-// "Learnt": the day you first learnt the chapter (today unless you say otherwise), and how
-// confident you are with each subtopic, which schedules each one's first review.
+// "Learnt": the day you learnt some (or all) of a chapter's subtopics (today unless you say
+// otherwise), and how confident you are with each, which schedules each one's first review.
+// A number rates every subtopic you haven't learnt yet; {subtopicId: confidence} picks some.
 export function markLearnt(doc, id, confidence, today, on = today) {
   const c = chapterOrFail(doc, id);
-  if (c.first_learnt) fail(`Already marked as learnt on ${L.formatDMY(c.first_learnt)}`);
-  const ratings = ratingsFor(doc, c, confidence);
-  if (ratings.length < chapterSubtopics(doc, c.id).length) fail("Rate every subtopic");
+  const todo = chapterSubtopics(doc, c.id).filter((x) => !learntOn(c, x));
+  if (!todo.length) fail(`Already marked as learnt on ${L.formatDMY(c.first_learnt)}`);
+  const ratings = confidence !== null && typeof confidence === "object"
+    ? ratingsFor(doc, c, confidence) : ratingsFor(doc, c, Object.fromEntries(todo.map((x) => [x.id, confidence])));
+  if (!ratings.length) fail("Tick at least one subtopic you've learnt");
+  for (const [x] of ratings) if (learntOn(c, x)) fail(`${x.title} is already learnt (${L.formatDMY(learntOn(c, x))})`);
   const d = checkDate(on, "Learnt on");
   if (d > today) fail("Learnt on can't be in the future");
-  c.first_learnt = d;
   for (const [x, conf] of ratings) x.confidence = conf;
+  learnSubtopics(doc, c, ratings.map(([x]) => x), d);
   return doc;
 }
 
@@ -372,7 +426,10 @@ export function reviewSubtopics(doc, chapterId, ratings, note, today, { on = tod
   if (!list.length) fail("Tick at least one subtopic you reviewed");
   const d = checkDate(on, "Review date");
   if (d > today) fail("A review can't be in the future");
-  if (c.first_learnt && d < c.first_learnt) fail(`That's before you first learnt this chapter (${L.formatDMY(c.first_learnt)}). Change the first learnt date first.`);
+  for (const [x] of list) {
+    const l = learntOn(c, x);
+    if (l && d < l) fail(`That's before you first learnt ${x.title} (${L.formatDMY(l)}). Change its first learnt date first.`);
+  }
   const revs = reviewsBySubtopic(doc);
   for (const [x, conf] of list) {
     const earlier = (revs[x.id] || []).filter((r) => r.reviewed_on <= d);
@@ -380,7 +437,9 @@ export function reviewSubtopics(doc, chapterId, ratings, note, today, { on = tod
                        confidence_before: earlier.length ? earlier[earlier.length - 1].confidence_after : x.confidence,
                        confidence_after: conf, note: String(note || ""), created_at: now });
   }
-  if (!c.first_learnt) c.first_learnt = d; // reviewing it means you'd learnt it by then
+  // reviewing a subtopic means you'd learnt it by then
+  const unlearnt = list.map(([x]) => x).filter((x) => !learntOn(c, x));
+  if (unlearnt.length) learnSubtopics(doc, c, unlearnt, d);
   return doc;
 }
 
@@ -397,7 +456,8 @@ export function updateReview(doc, id, data, today) {
     const d = checkDate(data.reviewed_on, "Review date");
     if (d > today) fail("A review can't be in the future");
     const c = chapterOrFail(doc, r.chapter_id);
-    if (c.first_learnt && d < c.first_learnt) fail(`That's before you first learnt this chapter (${L.formatDMY(c.first_learnt)})`);
+    const x = subtopicOrFail(doc, r.subtopic_id);
+    if (learntOn(c, x) && d < learntOn(c, x)) fail(`That's before you first learnt ${x.title} (${L.formatDMY(learntOn(c, x))})`);
     f.reviewed_on = d;
   }
   if ("note" in data) f.note = String(data.note || "");
@@ -422,7 +482,7 @@ export function addSubtopic(doc, chapterId, title, { id = newId() } = {}) {
   const c = chapterOrFail(doc, chapterId);
   const t = cleanTitle(title);
   const num = Math.max(0, ...chapterSubtopics(doc, c.id).map((x) => x.num)) + 1;
-  doc.subtopics.push({ id, chapter_id: c.id, num, title: t, a_only: false, confidence: null });
+  doc.subtopics.push({ id, chapter_id: c.id, num, title: t, a_only: false, confidence: null, first_learnt: null });
   return doc;
 }
 
@@ -431,12 +491,13 @@ export function renameSubtopic(doc, id, title) {
   return doc;
 }
 
-// Deleting a subtopic deletes its reviews too.
+// Deleting a subtopic deletes its reviews too; its questions stay in the chapter's bank.
 export function deleteSubtopic(doc, id) {
   const x = subtopicOrFail(doc, id);
   if (chapterSubtopics(doc, x.chapter_id).length === 1) fail("A chapter needs at least one subtopic");
   doc.subtopics = doc.subtopics.filter((y) => y.id !== x.id);
   doc.reviews = doc.reviews.filter((r) => r.subtopic_id !== x.id);
+  for (const q of doc.questions || []) if (q.subtopic_id === x.id) q.subtopic_id = null;
   return doc;
 }
 
@@ -728,11 +789,20 @@ function checkFiles(files, what) {
   });
 }
 
-function bankFields(doc, data, partial) {
+// A question is on a chapter, and optionally one of its subtopics (none = the whole chapter).
+function bankFields(doc, data, partial, current = null) {
   const f = {};
   if ("chapter_id" in data || !partial) {
     if (!data.chapter_id || !byId(doc.chapters, data.chapter_id)) fail("Pick the chapter this question is on");
     f.chapter_id = String(data.chapter_id);
+  }
+  const chapterId = f.chapter_id || current?.chapter_id;
+  if ("subtopic_id" in data || !partial) {
+    const sid = data.subtopic_id ? String(data.subtopic_id) : null;
+    if (sid && byId(doc.subtopics, sid)?.chapter_id !== chapterId) fail("That subtopic isn't in this question's chapter");
+    f.subtopic_id = sid;
+  } else if (f.chapter_id && current?.subtopic_id && byId(doc.subtopics, current.subtopic_id)?.chapter_id !== f.chapter_id) {
+    f.subtopic_id = null; // moved to another chapter: its old subtopic no longer applies
   }
   for (const k of ["title", "source", "notes", "solution_text"]) if (k in data) f[k] = String(data[k] ?? "").slice(0, 20000);
   if ("status" in data || !partial) {
@@ -745,12 +815,15 @@ function bankFields(doc, data, partial) {
 
 export function listBank(doc) {
   const ch = Object.fromEntries(doc.chapters.map((c) => [c.id, c]));
+  const subs = Object.fromEntries(doc.subtopics.map((x) => [x.id, x]));
   return [...(doc.questions || [])]
     .sort((a, b) => (a.added_on < b.added_on ? 1 : a.added_on > b.added_on ? -1 : 0) || a.title.localeCompare(b.title))
     .map((q) => {
       const ms = doc.mistakes.filter((m) => m.question_id === q.id);
       const c = ch[q.chapter_id] || {};
+      const x = q.subtopic_id ? subs[q.subtopic_id] : null;
       return { ...q, chapter_title: c.title || null, chapter_strand: c.strand || null, book: c.book || null, ch_num: c.ch_num ?? null,
+               subtopic_title: x ? x.title : null, subtopic_num: x ? x.num : null,
                sort_order: c.sort_order ?? 0, mistake_count: ms.length, open_mistakes: ms.filter((m) => !m.retest_passed).length,
                has_solution: Boolean(q.solution_files.length || q.solution_text.trim()) };
     });
@@ -767,14 +840,14 @@ export function createBankQuestion(doc, data, today, { id = newId() } = {}) {
   const files = checkFiles(data.files || [], "Question files");
   if (!files.length) fail("Add at least one photo or PDF of the question");
   doc.questions ||= [];
-  doc.questions.push({ id, title: "", source: "", notes: "", solution_text: "", ...f, added_on: today, files,
+  doc.questions.push({ id, subtopic_id: null, title: "", source: "", notes: "", solution_text: "", ...f, added_on: today, files,
                        solution_files: checkFiles(data.solution_files || [], "Solution files") });
   return doc;
 }
 
 export function updateBankQuestion(doc, id, data) {
   const q = questionOrFail(doc, id);
-  const f = bankFields(doc, data, true);
+  const f = bankFields(doc, data, true, q);
   if (!Object.keys(f).length) fail("Nothing to update");
   Object.assign(q, f);
   if (f.chapter_id) for (const m of doc.mistakes) if (m.question_id === q.id) m.chapter_id = f.chapter_id;
