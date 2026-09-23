@@ -34,7 +34,7 @@ z = zipfile.ZipFile(sys.argv[1]); assert z.testzip() is None
 print(json.dumps({n: z.read(n).decode() for n in z.namelist()}))`, join(dir, "t.zip")]).toString();
     const got = JSON.parse(listing);
     assert.deepEqual(Object.keys(got).sort(), ["boundaries.csv", "chapters.csv", "mistakes.csv", "paper_questions.csv",
-      "papers.csv", "questions.csv", "reviews.csv", "settings.csv"]);
+      "papers.csv", "questions.csv", "reviews.csv", "settings.csv", "subtopics.csv"]);
     assert.equal(parseCSV(got["chapters.csv"]).length, 80);
     assert.equal(parseCSV(got["reviews.csv"])[0].note, 'note, with "quotes"');
     assert.match(got["papers.csv"], /^id,paper_code,series/); // empty tables still have headers

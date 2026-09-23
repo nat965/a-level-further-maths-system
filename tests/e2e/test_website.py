@@ -164,9 +164,10 @@ class Website(unittest.TestCase):
 
         # --- learnt today from the "next to learn" list
         page.locator("#learn-section .due-item", has_text="Maths Y1 (red) ch 1").locator("button[data-action=learnt]").click()
-        page.wait_for_selector(".modal:has-text('Learnt today')")
-        page.keyboard.press("3")
-        self.assertIn("First review in 14 days", page.inner_text("#next-preview"))
+        page.wait_for_selector(".modal .sub-rate")
+        self.assertEqual(page.input_value("#review-on"), "10/01/2027")
+        page.keyboard.press("3")  # rates every subtopic 3
+        self.assertEqual(page.locator(".sub-rate td.next").all_inner_texts(), ["24/01/2027"] * 5)
         page.keyboard.press("Enter")
         page.wait_for_selector("#learn-section .due-item:has-text('Maths Y1 (red) ch 2')")
         self.wait_saved(page)
@@ -178,13 +179,21 @@ class Website(unittest.TestCase):
         for title in ("Indices and surds", "Quadratic functions", "Polynomials"):
             page.click(f"#ch-table a[data-action=open]:text-is('{title}')")
             page.wait_for_selector(".drawer:has-text('Not learnt yet')")
-            page.fill(".drawer input[data-change=first-learnt]", "2026-12-01")
-            page.wait_for_selector(".drawer:has-text('Learnt 1 Dec 2026')")
+            page.fill(".drawer input[data-change=first-learnt]", "01/12/2026")
+            page.keyboard.press("Enter")
+            page.wait_for_selector(".drawer:has-text('Learnt 01/12/2026')")
             page.keyboard.press("Escape")
-        # rate one of them inline in the table
-        row = page.locator("#ch-table tbody tr", has_text="Indices and surds")
-        row.locator("select[data-change=confidence]").select_option("2")
+        # review one subtopic straight from the table
+        page.locator("#ch-table tr.ch-row", has_text="Indices and surds").locator("button[data-action=toggle-subs]").click()
+        sub = page.locator("#ch-table tr.sub-row", has_text="Using the laws of indices")
+        sub.locator("button[data-action=review-sub]").click()
+        page.wait_for_selector(".modal .sub-rate")
+        self.assertEqual(page.locator(".sub-rate input.tick:checked").count(), 1)
+        page.keyboard.press("2")
+        page.keyboard.press("Enter")
+        page.wait_for_selector("#ch-table tr.sub-row:has-text('Using the laws of indices') .conf.c2")
         self.wait_saved(page)
+        page.locator("#ch-table tr.ch-row", has_text="Indices and surds").locator("button[data-action=toggle-subs]").click()
         page.select_option("select[data-filter=status]", "learnt")
         self.assertEqual(page.locator("#ch-table tbody tr").count(), 4)
         page.select_option("select[data-filter=status]", "")
@@ -197,7 +206,7 @@ class Website(unittest.TestCase):
         self.assertEqual(page.inner_text("#due-badge"), "3")
         first_id = page.locator("#review-section .due-item").first.get_attribute("data-id")
         page.keyboard.press("r")
-        page.wait_for_selector(".modal .conf-picker")
+        page.wait_for_selector(".modal .sub-rate")
         page.keyboard.press("4")
         page.keyboard.press("Enter")
         page.wait_for_function("document.querySelectorAll('#review-section .due-item').length === 2")
@@ -262,13 +271,16 @@ class Website(unittest.TestCase):
             page.click("button[data-action=export-json]")
         exported = json.loads(Path(dl.value.path()).read_text())
         self.assertEqual(exported["format"], "revision-tracker")
-        self.assertEqual(len(exported["reviews"]), 1)
+        self.assertEqual(len(exported["subtopics"]), 332)
+        self.assertGreaterEqual(len(exported["reviews"]), 2)
+        self.assertTrue(all(r["subtopic_id"] for r in exported["reviews"]))
         self.assertEqual(len(exported["mistakes"]), 1)
         with page.expect_download() as dl:
             page.click("button[data-action=export-csv]")
         z = zipfile.ZipFile(io.BytesIO(Path(dl.value.path()).read_bytes()))
         self.assertIsNone(z.testzip())
         self.assertIn("chapters.csv", z.namelist())
+        self.assertIn("subtopics.csv", z.namelist())
         page.wait_for_selector("#backup-list table")
         self.assertEqual(page.locator("#backup-list tbody tr").count(), 1)  # start-of-day copy
         page.keyboard.press("t")
@@ -312,12 +324,12 @@ class Website(unittest.TestCase):
 
         # both devices change something at the same time
         phone.locator("#learn-section .due-item", has_text="Further Stats ch 1").locator("button[data-action=learnt]").click()
-        phone.wait_for_selector(".modal .conf-picker")
-        phone.click(".conf-picker button[data-conf='2']")
+        phone.wait_for_selector(".modal .sub-rate")
+        phone.click(".rate.all button[data-all='2']")
         phone.click("#review-save")
         laptop.locator("#learn-section .due-item", has_text="Further Mechanics ch 1").locator("button[data-action=learnt]").click()
-        laptop.wait_for_selector(".modal .conf-picker")
-        laptop.click(".conf-picker button[data-conf='5']")
+        laptop.wait_for_selector(".modal .sub-rate")
+        laptop.click(".rate.all button[data-all='5']")
         laptop.click("#review-save")
         self.wait_saved(phone)
         self.wait_saved(laptop)
@@ -363,12 +375,10 @@ class Website(unittest.TestCase):
 
         # --- "learnt" can be dated in the past
         page.locator("#learn-section .due-item", has_text="Maths Y1 (red) ch 1").locator("button[data-action=learnt]").click()
-        page.wait_for_selector(".modal #learnt-on")
-        page.fill("#learnt-on", "2027-01-01")
-        page.click(".conf-picker button[data-conf='3']")
-        preview = page.inner_text("#next-preview")
-        self.assertIn("14 days after", preview)
-        self.assertIn("15 Jan", preview)
+        page.wait_for_selector(".modal #review-on")
+        page.fill("#review-on", "01/01/2027")
+        page.click(".rate.all button[data-all='3']")
+        self.assertEqual(page.locator(".sub-rate td.next").first.inner_text(), "15/01/2027")
         page.click("#review-save")
         page.wait_for_selector("#learn-section .due-item:has-text('Maths Y1 (red) ch 2')")
         self.wait_saved(page)
@@ -377,16 +387,22 @@ class Website(unittest.TestCase):
         page.keyboard.press("2")
         page.wait_for_selector("#ch-table tbody tr")
         row = page.locator("#ch-table tbody tr").first
-        self.assertEqual(row.locator("input[data-change=first-learnt]").input_value(), "2027-01-01")
-        row.locator("input[data-change=first-learnt]").fill("2026-12-20")
+        self.assertEqual(row.locator("input[data-change=first-learnt]").input_value(), "01/01/2027")
+        row.locator("input[data-change=first-learnt]").fill("20/12/2026")
+        row.locator("input[data-change=first-learnt]").press("Enter")
+        page.wait_for_selector(".toast:has-text('First learnt: 20/12/2026')")
         self.wait_saved(page)
-        quad = page.locator("#ch-table tbody tr", has_text="Quadratic functions").first
-        quad.locator("input[data-change=first-learnt]").fill("2026-11-01")
+        quad = page.locator("#ch-table tr.ch-row", has_text="Quadratic functions").first
+        quad.locator("input[data-change=first-learnt]").fill("1/11/2026")
+        quad.locator("input[data-change=first-learnt]").press("Enter")
+        page.wait_for_selector(".toast:has-text('First learnt: 01/11/2026')")
+        quad.locator("input[data-change=first-learnt]").fill("15/10/2026")
+        quad.locator("input[data-change=first-learnt]").press("Enter")
+        page.wait_for_selector(".toast:has-text('First learnt: 15/10/2026')")
         self.wait_saved(page)
-        quad.locator("input[data-change=first-learnt]").fill("2026-10-15")
-        self.wait_saved(page)
+        self.assertEqual(quad.locator("input[data-change=first-learnt]").input_value(), "15/10/2026")
         page.click("#ch-table a[data-action=open]:text-is('Quadratic functions')")
-        page.wait_for_selector(".drawer:has-text('Learnt 15 Oct 2026')")
+        page.wait_for_selector(".drawer:has-text('Learnt 15/10/2026')")
         self.shot(page, "10-first-learnt")
 
         # --- add a question (photo + PDF) with a model solution from the chapter panel
@@ -480,6 +496,105 @@ class Website(unittest.TestCase):
         self.assertIsNotNone(self.rpc("get_file_chunk", {"p_code": code, "p_file_id": file_id, "p_seq": 0}))
         for p in (page, other, friend):
             self.assertEqual(p.errors, [], p.errors)
+
+    # ------------------------------------------------------------------ subtopics, each with its own reviews
+
+    def test_subtopic_reviews(self):
+        page = self.new_page()
+        self.create_tracker(page)
+        page.click("#open-new")
+        page.wait_for_selector("#learn-section")
+
+        # learn Quadratic functions on 1 Jan, rating each subtopic
+        page.locator("#learn-section .due-item", has_text="Maths Y1 (red) ch 1").locator("button[data-action=learnt]").click()
+        page.wait_for_selector(".modal .sub-rate")
+        page.keyboard.press("Escape")
+        page.keyboard.press("2")
+        page.wait_for_selector("#ch-table tbody tr")
+        page.locator("#ch-table tr.ch-row", has_text="Quadratic functions").locator("button[data-action=learnt]").click()
+        page.wait_for_selector(".modal .sub-rate")
+        self.assertEqual(page.locator(".sub-rate tbody tr").count(), 6)
+        page.fill("#review-on", "1/1/2027")
+        self.assertTrue(page.is_disabled("#review-save"))  # every subtopic needs a rating
+        page.keyboard.press("Tab")  # leave the date box
+        page.click(".rate.all button[data-all='4']")
+        page.locator(".sub-rate tbody tr", has_text="Completing the square").locator("button[data-conf='1']").click()
+        self.assertEqual(page.locator(".sub-rate tbody tr", has_text="Completing the square").locator("td.next").inner_text(), "04/01/2027")
+        self.shot(page, "13-learnt-subtopics")
+        page.click("#review-save")
+        page.wait_for_selector("#ch-table tr.ch-row:has-text('Quadratic functions') .pill:has-text('1/6 due')")
+
+        # the due list shows just the due subtopic
+        page.keyboard.press("1")
+        page.wait_for_selector("#review-section .due-item")
+        item = page.locator("#review-section .due-item", has_text="Quadratic functions")
+        self.assertEqual(item.locator(".sub-due li").count(), 1)
+        self.assertIn("Completing the square", item.inner_text())
+        self.assertIn("6 days overdue", item.inner_text())
+        self.shot(page, "14-due-subtopics")
+
+        # review it yesterday: tick another subtopic too, with its own rating
+        item.locator("button[data-action=review]").click()
+        page.wait_for_selector(".modal .sub-rate")
+        self.assertEqual(page.locator(".sub-rate input.tick:checked").count(), 1)  # the due one
+        page.click("button[data-set-date='2027-01-09']")
+        self.assertEqual(page.input_value("#review-on"), "09/01/2027")
+        page.locator(".sub-rate tbody tr", has_text="Completing the square").locator("button[data-conf='3']").click()
+        page.locator(".sub-rate tbody tr", has_text="The discriminant").locator("button[data-conf='5']").click()
+        self.assertEqual(page.locator(".sub-rate input.tick:checked").count(), 2)  # rating ticks it
+        page.fill("#review-note", "Ex 3C")
+        self.assertIn("2 subtopics", page.inner_text("#review-save"))
+        page.click("#review-save")
+        page.wait_for_selector(".toast:has-text('Logged review of 2 subtopics on 09/01/2027')")
+        page.wait_for_selector("#review-section:has-text('Nothing due')")
+
+        # each subtopic has its own history, in dd/mm/yyyy, and a review's date can be changed
+        page.keyboard.press("2")
+        page.wait_for_selector("#ch-table tbody tr")
+        page.click("#ch-table a[data-action=open]:text-is('Quadratic functions')")
+        self.assertIn("Reviewed 2 subtopics", page.inner_text(".drawer .timeline"))
+        sub = page.locator(".drawer details.sub", has_text="Completing the square")
+        self.assertIn("Last reviewed 09/01/2027", sub.inner_text())
+        self.assertIn("next 23/01/2027", sub.inner_text())
+        sub.locator("summary .sub-name").click()
+        date = sub.locator("input[data-change=review-date]")
+        self.assertEqual(date.input_value(), "09/01/2027")
+        date.fill("05/01/2027")
+        date.press("Enter")
+        page.wait_for_selector(".toast:has-text('Review date changed')")
+        sub = page.locator(".drawer details.sub", has_text="Completing the square")
+        page.wait_for_function("document.querySelector('.drawer details.sub[open]')?.innerText.includes('next 19/01/2027')")
+        self.assertIn("1 → 3", sub.inner_text())
+        # a date in the future is refused
+        sub.locator("input[data-change=review-date]").fill("20/01/2027")
+        sub.locator("input[data-change=review-date]").press("Enter")
+        page.wait_for_selector(".toast.error:has-text('future')")
+        self.assertEqual(page.locator(".drawer details.sub[open] input[data-change=review-date]").input_value(), "05/01/2027")
+        self.shot(page, "15-subtopic-history")
+
+        # edit the list: add, rename, delete
+        page.click(".drawer button[data-action=edit-subs]")
+        page.fill("#add-sub-form [name=title]", "Solving quadratics by formula")
+        page.press("#add-sub-form [name=title]", "Enter")
+        page.wait_for_selector(".drawer input[data-change=rename-sub][value='Solving quadratics by formula']")
+        page.fill(".drawer input[data-change=rename-sub][value='Solving quadratics by formula']", "The quadratic formula")
+        page.press(".drawer input[data-change=rename-sub][value='Solving quadratics by formula']", "Tab")
+        page.wait_for_selector(".toast:has-text('Renamed')")
+        page.locator(".drawer .sub-edit", has=page.locator("input[value='Review of quadratic equations']")).locator("button[data-action=del-sub]").click()
+        page.wait_for_selector(".toast:has-text('Subtopic deleted')")
+        page.click(".drawer button[data-action=edit-subs]")
+        titles = page.locator(".drawer details.sub .sub-name").all_inner_texts()
+        self.assertEqual(len(titles), 6)
+        self.assertEqual(titles[-1], "The quadratic formula")
+        self.assertIn("Learnt — rate", page.inner_text(".drawer .chip-row"))  # the new one needs rating
+        page.keyboard.press("Escape")
+
+        # searching finds subtopics and opens their chapter's list
+        page.fill("#ch-search", "discriminant")
+        page.wait_for_selector("#ch-table tr.sub-row.match")
+        self.assertEqual(page.locator("#ch-table tr.ch-row").count(), 2)  # Quadratic functions, Using graphs
+        self.assertEqual(page.locator("#ch-table tr.sub-row.match").count(), 2)
+        self.assertEqual(page.errors, [], page.errors)
 
     def test_import_desktop_app_export(self):
         page = self.new_page()

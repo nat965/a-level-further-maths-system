@@ -6,7 +6,7 @@ A revision tracker website for **OCR A-level Maths (H240)** and **OCR A Further 
 - **Everyone gets their own tracker.** Press *Start a new tracker* to get a new code. Each tracker starts with the same 80 chapters and is completely separate from everyone else's.
 - **Nothing to download or update.** Changes to the site go live automatically.
 
-Everything is scheduled around **when you first learnt each chapter**.
+Every chapter is split into its textbook **subtopics** (332 in all), and **each subtopic has its own reviews and schedule**, counted from when you first learnt the chapter. Dates are shown and typed as **dd/mm/yyyy**.
 
 ---
 
@@ -37,19 +37,34 @@ If you lose your connection, keep the tab open: your changes save when you're ba
 
 | Page | What it's for |
 |---|---|
-| **Due today** (home) | Chapters whose review date has arrived, plus mistake retests that are due, sorted by **priority**. Below that, **Next to learn** shows the first chapter you haven't learnt yet in each book. |
-| **Chapters** | All 80 chapters. Filter by strand, book or status (e.g. learnt / not learnt yet); search; click any column header to sort. Set Summary / Exercises / Exam Qs status, confidence and the **first learnt** date inline. Click a title for its **history timeline** and the chapter's **question bank**. |
-| **Dashboard** | Progress by strand and by book, your **learning pace** (ahead or behind), top 10 weakest chapters, review streak and reviews this week, paper averages vs A*, and exam countdown. |
+| **Due today** (home) | Subtopics whose review date has arrived, grouped by chapter and sorted by **priority**, plus mistake retests that are due. Below that, **Next to learn** shows the first chapter you haven't learnt yet in each book. |
+| **Chapters** | All 80 chapters. Filter by strand, book or status (e.g. learnt / not learnt yet); search; click any column header to sort. Set Summary / Exercises / Exam Qs status and the **first learnt** date inline. Press ▸ (or *Show all subtopics*) to see each chapter's subtopics with their own confidence, last review, next review and a *Review* button. Searching also finds subtopics. Click a title for the chapter's **subtopics and their review history**, its **history timeline** and its **question bank**. |
+| **Dashboard** | Progress by strand and by book, your **learning pace** (ahead or behind), top 10 weakest chapters and weakest subtopics, review streak and subtopic reviews this week, paper averages vs A*, and exam countdown. |
 | **Past papers** | Log attempts (paper, series, date, mark, time) and the **questions you dropped marks on** (chapter, marks lost, error type, fix). Shows a chart of % over time per paper with the A* line, and your grade boundaries. |
 | **Mistakes** | Date is added automatically. Log chapter, source, what went wrong and the correct method, with a **retest date** that feeds the due list. Tick "passed" when you've got it right. |
 | **Questions** | Your question bank: every question you've uploaded, filtered by strand, chapter or result, with thumbnails. See [Question bank](#question-bank) below. |
 | **Settings** | Review intervals, priority weights, exam dates, learn-everything-by date, paper max marks and theme. Also your code, log out, backups, export/import, and how much file storage you've used. |
 
-**Learnt today** (★) appears on chapters you haven't learnt yet. It asks for your confidence, which schedules the first review, and the date you learnt it (today unless you change it). Reviewing a chapter you haven't marked as learnt also marks it as learnt that day.
+### Subtopics and reviews
 
-**Changing when you first learnt a chapter:** change the *First learnt* date at any time, in the Chapters table or in the chapter's panel. Chapters you haven't reviewed since are rescheduled from the new date. Once a chapter has reviews, the date can still be changed but not cleared (undo its reviews first).
+Each chapter's subtopics are its textbook sections (for example, *Quadratic functions* has *Review of quadratic equations*, *Graphs of quadratic functions*, *Completing the square*, …). Sections marked **A only** are A-level only. You can rename, add or delete subtopics in the chapter's panel (*Edit list*).
 
-**Reviewed today** is on every learnt chapter. It stamps today's date and logs the review in the chapter's history. It also asks for your new confidence (1–5) and shows when the next review will be. You never type a review date. If you log one by mistake, use *Undo* in the chapter's history.
+**Learnt** (★) appears on chapters you haven't learnt yet. Rate how confident you are with each subtopic: press `1`–`5` to rate them all, then change any that differ. Also set the date you learnt it: today unless you change it. Each subtopic's first review is scheduled from that date and its own rating.
+
+**Review** is on every learnt chapter, and on each of its subtopics.
+- **Pick what you reviewed.** It opens with the subtopics that are due already ticked. Tick any others you went over, and rate each one 1–5 for how confident you are now. Rating a subtopic ticks it.
+- **Set the date.** The review is dated today unless you change it: type a date as dd/mm/yyyy, press *Yesterday*, or use the 📅 calendar.
+- **See the schedule.** The dialog shows each subtopic's next review date before you save.
+
+Each ticked subtopic gets its own dated review and its own next review.
+
+**A chapter's summary comes from its subtopics.** Its confidence is the average of its subtopics' ratings (the panel also shows the lowest). Its next review is its earliest subtopic's. It's due when any of its subtopics is due.
+
+**Review history:** open a chapter and click a subtopic to see every review of it, with dates in dd/mm/yyyy. You can change a review's date there, or *Undo* it. The chapter's *History* shows each review session. *Undo* there removes the whole session.
+
+**Changing when you first learnt a chapter:** change the *First learnt* date at any time, in the Chapters table or in the chapter's panel. Subtopics you haven't reviewed since are rescheduled from the new date. Once a chapter has reviews, the date can still be changed but not cleared (undo its reviews first).
+
+**Trackers from before subtopics** upgrade automatically the first time you open them. Each old chapter review becomes a review of every subtopic in that chapter, with the same date and confidence, so nothing is lost. If you have the site open in another tab, reload it.
 
 ### Keyboard shortcuts (on a computer; press `?` on the site)
 
@@ -57,11 +72,11 @@ If you lose your connection, keep the tab open: your changes save when you're ba
 |---|---|
 | `1`–`7` | Due / Chapters / Dashboard / Papers / Mistakes / Questions / Settings |
 | `j` `k` (or ↓ ↑) | Move selection |
-| `l` | Learnt today for the selected chapter |
-| `r` | Reviewed today for the selected chapter |
-| `1`–`5`, then `Enter` | Set confidence in the review dialog |
-| `Enter` / `o` | Open chapter history (or the selected question) |
-| `/` | Search chapters |
+| `l` | Learnt, for the selected chapter |
+| `r` | Review the selected chapter (or the selected subtopic in the Chapters table) |
+| `1`–`5`, then `Enter` | Rate every ticked subtopic in the review dialog, then save |
+| `Enter` / `o` | Open the chapter and its subtopics (or the selected question) |
+| `/` | Search chapters and subtopics |
 | `n` | New paper attempt / mistake / question |
 | `t` | Toggle dark mode |
 | `Esc` | Close dialog or panel |
@@ -81,21 +96,23 @@ Files are private to your tracker: they're stored in the same database and can o
 
 ## How the numbers work
 
-**Next review** = last review date (or, if you haven't reviewed it yet, the date you first learnt it) + interval for your current confidence. The defaults are 1 → 3 days, 2 → 7, 3 → 14, 4 → 30, 5 → 60; you can change them in Settings.
+Everything below is worked out **for each subtopic**.
+
+**Next review** = the subtopic's last review date (or, if you haven't reviewed it yet, the date you first learnt the chapter) + the interval for its current confidence. The defaults are 1 → 3 days, 2 → 7, 3 → 14, 4 → 30, 5 → 60; you can change them in Settings. Its current confidence is the one from its latest review by date. A review you back-date to before a later one doesn't change it.
 
 **Due** means you've learnt the chapter and either:
-- its next review date is today or earlier, or
-- you haven't rated your confidence yet (so it can be scheduled).
+- the subtopic's next review date is today or earlier, or
+- the subtopic hasn't been rated yet (for example, one you've just added), so it can be scheduled.
 
 Chapters you haven't learnt yet are never due.
 
-**Priority score (0–100)** is a weighted mix of four parts. The weights can be changed in Settings.
+**Priority score (0–100)** is a weighted mix of four parts, and a chapter's priority is its most urgent subtopic's. The weights can be changed in Settings.
 
 | Part | Default weight | 0 → 1 |
 |---|---|---|
 | Low confidence | 35 | confidence 5 → 0 … confidence 1 (or unrated) → 1 |
-| How overdue | 25 | days past the review date ÷ that interval, capped at 1. A learnt chapter with no confidence rating counts as 1. |
-| Marks lost in papers | 25 | *m* / (*m* + 8): 8 marks lost → 0.5, rising towards 1 |
+| How overdue | 25 | days past the review date ÷ that interval, capped at 1. An unrated subtopic of a learnt chapter counts as 1. |
+| Marks lost in papers | 25 | *m* / (*m* + 8), where *m* is the marks lost on the chapter: 8 marks lost → 0.5, rising towards 1 |
 | Learnt yet | 15 | learnt → 1, not learnt yet → 0 |
 
 **Learning pace:** your pace is the number of chapters you first learnt in the last 4 weeks, per week. The pace needed is the chapters left divided by the weeks until your *learn everything by* date (set in Settings; blank means your first exam). You're **ahead** if your pace is at least 10% above what's needed, **behind** if it's more than 10% below, and **on track** in between. The projected finish date assumes you keep your current pace.
@@ -152,6 +169,7 @@ From then on, every change pushed to the repository runs the tests and updates t
 web/                  the website (plain HTML/CSS/JS modules, no build step)
   js/logic.js         pure calculations: dates, spaced repetition, pace, priority, grades
   js/service.js       the tracker document and every change you can make to it
+  js/syllabus.js      every chapter's subtopics (textbook sections)
   js/sync.js          talks to Supabase; saves in the background, merges changes from other devices
   js/files.js         CSV and zip export/import
   js/filestore.js     uploads/downloads question files in 1 MB chunks
@@ -174,4 +192,4 @@ python3 -m unittest discover -s tests/e2e -v   # needs: pip install playwright &
 
 `npm run dev -- --today 2027-01-10` pretends it's another day, and `--data .devdata` keeps local data between runs.
 
-To regenerate the chapter list after editing the spreadsheet: `pip install openpyxl`, then `python3 tools/xlsx_to_seed.py seed/Maths_Further_Maths_Tracker.xlsx`. New trackers start from this list.
+To regenerate the chapter list after editing the spreadsheet: `pip install openpyxl`, then `python3 tools/xlsx_to_seed.py seed/Maths_Further_Maths_Tracker.xlsx`. New trackers start from this list. Each chapter's subtopics come from `web/js/syllabus.js` (keyed by book and chapter number).

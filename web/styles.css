@@ -272,3 +272,42 @@ details.solution > summary { cursor: pointer; }
 .modal.wide { width: min(640px, 94vw); max-height: 86vh; overflow-y: auto; top: 7vh; }
 input.date-cell { padding: 2px 4px; font-size: 12px; }
 .no-anim { animation: none !important; }
+
+/* ---- subtopics ---- */
+.dmy { display: inline-flex; align-items: center; position: relative; gap: 2px; }
+.dmy input[type=text] { width: 8.4em; font-variant-numeric: tabular-nums; }
+.dmy .cal { padding: 3px 5px; border: none; font-size: 14px; line-height: 1; }
+.dmy .cal-native { position: absolute; left: 0; bottom: 0; width: 1px; height: 1px; opacity: 0; pointer-events: none; border: 0; padding: 0; }
+input.date-cell { font-size: 12px; padding: 4px 6px; }
+.twisty { padding: 0 6px 0 0; border: none; background: none; color: var(--muted); font-size: 12px; }
+tr.sub-row td { background: var(--surface-2); border-bottom-color: transparent; font-size: 13px; }
+tr.sub-row td.sub-title { padding-left: 34px; font-weight: 500; }
+tr.sub-row.match td.sub-title { color: var(--accent); }
+tr.sub-row.selected td { background: var(--accent-soft, var(--surface-2)); }
+.sub-due { list-style: none; margin: 8px 0 0; padding: 0; display: grid; gap: 4px; }
+.sub-due li { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 13px; }
+.sub-due li a { color: var(--text); text-decoration: none; font-weight: 600; }
+.sub-due li a:hover { color: var(--accent); text-decoration: underline; }
+.sub-list { border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); }
+.sub-list details.sub + details.sub { border-top: 1px solid var(--border); }
+.sub-list summary { display: grid; grid-template-columns: 2.6em 1fr auto auto; column-gap: 8px; row-gap: 2px; align-items: center; padding: 8px 10px; cursor: pointer; list-style: none; }
+.sub-list summary .sub-meta { grid-column: 2 / -1; }
+.sub-list summary::-webkit-details-marker { display: none; }
+.sub-list summary .sub-name { font-weight: 600; }
+.sub-list details[open] summary { background: var(--surface-2); }
+.sub-list details > :not(summary) { margin: 0 10px 8px 10px; }
+.sub-list table.reviews td { font-size: 13px; }
+.sub-edit { display: flex; gap: 8px; align-items: center; margin-bottom: 6px; }
+.sub-edit input { flex: 1; }
+table.sub-rate td, table.sub-rate th { padding: 5px 7px; }
+table.sub-rate tr.off td:not(:first-child) { opacity: .45; }
+table.sub-rate td.next { white-space: nowrap; min-width: 6.5em; }
+.rate { display: inline-flex; gap: 3px; }
+.rate button { padding: 3px 0; width: 28px; font-size: 13px; }
+.rate button.chosen { background: var(--accent); border-color: var(--accent); color: #fff; }
+.rate.all button { font-size: 11px; padding: 2px 0; width: 28px; }
+.conf-key { margin-top: 6px; }
+.bad-text { color: var(--bad); min-height: 1.2em; margin-top: 6px; }
+@media (max-width: 700px) {
+  .rate button { width: 26px; }
+}

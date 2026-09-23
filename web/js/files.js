@@ -49,8 +49,9 @@ export function docToCSVs(doc) {
 }
 
 const COLUMNS = {
-  chapters: ["id", "strand", "book", "ch_num", "title", "sections", "level", "summary_status", "exercises_status", "examq_status", "confidence", "first_learnt", "notes", "sort_order"],
-  reviews: ["id", "chapter_id", "reviewed_on", "confidence_before", "confidence_after", "note", "created_at"],
+  chapters: ["id", "strand", "book", "ch_num", "title", "sections", "level", "summary_status", "exercises_status", "examq_status", "first_learnt", "notes", "sort_order"],
+  subtopics: ["id", "chapter_id", "num", "title", "a_only", "confidence"],
+  reviews: ["id", "chapter_id", "subtopic_id", "reviewed_on", "confidence_before", "confidence_after", "note", "created_at"],
   papers: ["id", "paper_code", "series", "sat_on", "mark", "max_mark", "time_taken_min", "notes"],
   paper_questions: ["id", "paper_id", "q_num", "chapter_id", "marks_lost", "error_type", "fix"],
   boundaries: ["id", "paper_code", "series", "a_star", "a", "b", "c", "d", "e"],

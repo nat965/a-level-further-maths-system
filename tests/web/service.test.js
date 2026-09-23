@@ -22,26 +22,26 @@ describe("new tracker", () => {
 });
 
 describe("chapters", () => {
-  test("update statuses, confidence, notes; validation", () => {
+  test("update statuses and notes; validation", () => {
     const d = fresh();
-    S.updateChapter(d, "3", { summary_status: "done", exercises_status: "in_progress", confidence: 2, notes: "discriminant" }, T);
+    S.updateChapter(d, "3", { summary_status: "done", exercises_status: "in_progress", notes: "discriminant" }, T);
     const c = ch(d, "3");
-    assert.deepEqual([c.summary_status, c.exercises_status, c.confidence, c.notes], ["done", "in_progress", 2, "discriminant"]);
+    assert.deepEqual([c.summary_status, c.exercises_status, c.notes], ["done", "in_progress", "discriminant"]);
     assert.throws(() => S.updateChapter(d, "3", { summary_status: "finished" }, T), /summary_status must be/);
-    assert.throws(() => S.updateChapter(d, "3", { confidence: 6 }, T), /Confidence/);
-    assert.throws(() => S.updateChapter(d, "999", { confidence: 3 }, T), /not found/);
+    assert.throws(() => S.updateChapter(d, "3", { confidence: 3 }, T), /Nothing to update/);
+    assert.throws(() => S.updateChapter(d, "999", { notes: "x" }, T), /not found/);
   });
 
-  test("reviewed today stamps the date, logs history, schedules next, marks learnt", () => {
+  test("reviewing a whole chapter reviews every subtopic, marks it learnt and schedules the next review", () => {
     const d = fresh();
     S.reviewChapter(d, "5", 2, "Ex 5A", T);
     const c = ch(d, "5");
-    assert.deepEqual([c.last_reviewed, c.first_learnt, c.confidence, c.next_review, c.days_since, c.due],
-      [T, T, 2, "2027-01-17", 0, false]);
+    assert.deepEqual([c.last_reviewed, c.first_learnt, c.confidence, c.next_review, c.days_since, c.due, c.review_count],
+      [T, T, 2, "2027-01-17", 0, false, 6]);
+    assert.ok(c.subtopics.every((x) => x.confidence === 2 && x.next_review === "2027-01-17"));
     const h = S.chapterHistory(d, "5", T);
-    assert.equal(h.reviews.length, 1);
-    assert.equal(h.reviews[0].confidence_before, null);
-    assert.equal(h.reviews[0].note, "Ex 5A");
+    assert.equal(h.reviews.length, 6);
+    assert.deepEqual([h.reviews[0].subtopic_title, h.reviews[0].confidence_before, h.reviews[0].note], ["Intersections of graphs", null, "Ex 5A"]);
     assert.throws(() => S.reviewChapter(d, "5", 0, "", T), /Confidence/);
   });
 
@@ -54,44 +54,41 @@ describe("chapters", () => {
     assert.equal(ch(d, "5", "2027-02-15").days_until_review, -6);
   });
 
-  test("undo the latest review restores confidence", () => {
-    const d = fresh();
-    S.updateChapter(d, "7", { confidence: 3 }, T);
-    S.reviewChapter(d, "7", 5, "", T);
-    S.deleteReview(d, S.chapterHistory(d, "7", T).reviews[0].id);
-    const c = ch(d, "7");
-    assert.deepEqual([c.confidence, c.last_reviewed], [3, null]);
-  });
-
-  test("learnt today schedules the first review", () => {
+  test("learnt: the date and a confidence for each subtopic schedule the first reviews", () => {
     const d = fresh();
     S.markLearnt(d, "12", 3, T);
-    let c = ch(d, "12");
-    assert.deepEqual([c.first_learnt, c.learnt, c.confidence, c.next_review, c.last_reviewed, c.due],
-      [T, true, 3, "2027-01-24", null, false]);
+    const c = ch(d, "12");
+    assert.deepEqual([c.first_learnt, c.learnt, c.confidence, c.next_review, c.last_reviewed, c.due, c.subtopic_count],
+      [T, true, 3, "2027-01-24", null, false, 4]);
     assert.throws(() => S.markLearnt(d, "12", 3, T), /Already marked/);
     assert.throws(() => S.markLearnt(d, "13", 9, T), /Confidence/);
-    // learnt on an earlier day: the first review counts from that day
-    S.markLearnt(d, "14", 2, T, "2027-01-01");
-    assert.deepEqual([ch(d, "14").first_learnt, ch(d, "14").next_review, ch(d, "14").due], ["2027-01-01", "2027-01-08", true]);
+    // learnt on an earlier day, rated per subtopic: each first review counts from that day
+    S.markLearnt(d, "14", { "14.1": 2, "14.2": 5, "14.3": 3 }, T, "01/01/2027");
+    const c14 = ch(d, "14");
+    assert.deepEqual([c14.first_learnt, c14.next_review, c14.due, c14.due_count, c14.confidence], ["2027-01-01", "2027-01-08", true, 1, 3.3]);
+    assert.deepEqual(c14.subtopics.map((x) => x.next_review), ["2027-01-08", "2027-03-02", "2027-01-15"]);
+    assert.throws(() => S.markLearnt(d, "13", { "13.1": 3 }, T), /Rate every subtopic/);
     assert.throws(() => S.markLearnt(d, "15", 2, T, "2027-02-01"), /future/);
-    assert.throws(() => S.markLearnt(d, "15", 2, T, "soon"), /must be a date/);
+    assert.throws(() => S.markLearnt(d, "15", 2, T, "soon"), /isn't a date/);
     assert.equal(ch(d, "12", "2027-01-24").due, true);
-    assert.ok(S.dueList(d, "2027-01-24").chapters.some((c) => c.id === "12"));
+    assert.ok(S.dueList(d, "2027-01-24").chapters.some((x) => x.id === "12"));
   });
 
-  test("back-filling a first-learnt date", () => {
+  test("back-filling and changing the first-learnt date", () => {
     const d = fresh();
-    S.updateChapter(d, "6", { first_learnt: "2026-12-01", confidence: 4 }, T);
+    S.updateChapter(d, "6", { first_learnt: "01/12/2026" }, T);
     let c = ch(d, "6");
-    assert.deepEqual([c.first_learnt, c.next_review, c.due, c.days_since_learnt], ["2026-12-01", "2026-12-31", true, 40]);
+    // learnt but its subtopics aren't rated yet: due now, to rate them
+    assert.deepEqual([c.first_learnt, c.next_review, c.due, c.due_count, c.unrated_count, c.days_since_learnt],
+      ["2026-12-01", null, true, 5, 5, 40]);
     assert.throws(() => S.updateChapter(d, "6", { first_learnt: "2027-01-11" }, T), /future/);
-    assert.throws(() => S.updateChapter(d, "6", { first_learnt: "nope" }, T), /must be a date/);
+    assert.throws(() => S.updateChapter(d, "6", { first_learnt: "nope" }, T), /isn't a date/);
     S.updateChapter(d, "7", { first_learnt: T }, T);
-    assert.equal(ch(d, "7").due, true); // learnt but unrated
     S.updateChapter(d, "7", { first_learnt: null }, T);
     assert.equal(ch(d, "7").learnt, false);
     S.reviewChapter(d, "6", 4, "", T);
+    c = ch(d, "6");
+    assert.deepEqual([c.due, c.next_review], [false, "2027-02-09"]);
     assert.throws(() => S.updateChapter(d, "6", { first_learnt: null }, T), /already reviewed/);
     // any past date can be chosen, even after the first review
     S.updateChapter(d, "6", { first_learnt: "2027-01-11" }, "2027-01-12");
@@ -99,12 +96,91 @@ describe("chapters", () => {
   });
 });
 
+describe("subtopics", () => {
+  test("every chapter starts with its textbook subheadings", () => {
+    const d = fresh();
+    assert.equal(d.subtopics.length, 332);
+    const cs = S.listChapters(d, T);
+    assert.ok(cs.every((c) => c.subtopic_count >= 1));
+    assert.deepEqual(ch(d, "1").subtopics.map((x) => [x.id, x.num, x.title]).slice(0, 2),
+      [["1.1", 1, "Mathematical structures and arguments"], ["1.2", 2, "Inequality notation"]]);
+    const circ2 = cs.find((c) => c.book === "Further Mechanics" && c.ch_num === 9);
+    assert.deepEqual(circ2.subtopics.map((x) => [x.title, x.a_only]), [
+      ["Conservation of mechanical energy", false], ["Components of acceleration (a general model)", true], ["Problem solving situations", true]]);
+    const poisson = cs.find((c) => c.book === "Further Stats" && c.ch_num === 3);
+    assert.deepEqual(poisson.subtopics.map((x) => x.title), ["Using the Poisson model"]);
+  });
+
+  test("each subtopic has its own reviews, confidence and schedule", () => {
+    const d = fresh();
+    S.markLearnt(d, "3", 3, T, "2027-01-01");
+    S.reviewSubtopics(d, "3", { "3.3": 1, "3.5": 4 }, "completing the square again", T, { on: "08/01/2027", reviewId: "r" });
+    let c = ch(d, "3");
+    const next = Object.fromEntries(c.subtopics.map((x) => [x.id, x.next_review]));
+    assert.deepEqual([next["3.1"], next["3.3"], next["3.5"]], ["2027-01-15", "2027-01-11", "2027-02-07"]);
+    assert.deepEqual([c.confidence, c.min_confidence, c.next_review, c.last_reviewed, c.review_count], [2.8, 1, "2027-01-11", "2027-01-08", 2]);
+    assert.deepEqual(d.reviews.map((r) => [r.id, r.subtopic_id, r.reviewed_on, r.confidence_before, r.confidence_after]),
+      [["r:3.3", "3.3", "2027-01-08", 3, 1], ["r:3.5", "3.5", "2027-01-08", 3, 4]]);
+    // three days later only "Completing the square" is due
+    const due = S.dueList(d, "2027-01-14").chapters.find((x) => x.id === "3");
+    assert.deepEqual([due.due_count, due.due_subtopics.map((x) => x.title), due.overdue_days], [1, ["Completing the square"], 3]);
+    // a review dated before a later one doesn't change the current confidence
+    S.reviewSubtopics(d, "3", { "3.3": 2 }, "", T, { on: "2027-01-05", reviewId: "old" });
+    c = ch(d, "3");
+    assert.deepEqual([c.subtopics[2].confidence, c.subtopics[2].last_reviewed, d.reviews[2].confidence_before], [1, "2027-01-08", 3]);
+    // validation
+    assert.throws(() => S.reviewSubtopics(d, "3", { "3.3": 2 }, "", T, { on: "11/01/2027" }), /future/);
+    assert.throws(() => S.reviewSubtopics(d, "3", { "3.3": 2 }, "", T, { on: "31/12/2026" }), /before you first learnt/);
+    assert.throws(() => S.reviewSubtopics(d, "3", { "3.3": 2 }, "", T, { on: "31/02/2027" }), /real date/);
+    assert.throws(() => S.reviewSubtopics(d, "3", {}, "", T), /Tick at least one/);
+    assert.throws(() => S.reviewSubtopics(d, "3", { "4.1": 3 }, "", T), /isn't in this chapter/);
+    assert.throws(() => S.reviewSubtopics(d, "3", { "3.1": 6 }, "", T), /Confidence/);
+  });
+
+  test("change a review's date, or undo it", () => {
+    const d = fresh();
+    S.markLearnt(d, "7", 3, T, "2027-01-01");
+    S.reviewSubtopics(d, "7", { "7.2": 5 }, "", T, { on: "2027-01-09", reviewId: "a" });
+    assert.equal(ch(d, "7").subtopics[1].next_review, "2027-03-10");
+    S.updateReview(d, "a:7.2", { reviewed_on: "03/01/2027", note: "logs" }, T);
+    assert.deepEqual([ch(d, "7").subtopics[1].next_review, d.reviews[0].note], ["2027-03-04", "logs"]);
+    assert.throws(() => S.updateReview(d, "a:7.2", { reviewed_on: "2026-12-25" }, T), /before you first learnt/);
+    assert.throws(() => S.updateReview(d, "a:7.2", { reviewed_on: "2027-02-01" }, T), /future/);
+    S.deleteReview(d, "a:7.2");
+    const x = ch(d, "7").subtopics[1];
+    assert.deepEqual([x.confidence, x.last_reviewed, x.next_review], [3, null, "2027-01-15"]);
+    assert.throws(() => S.deleteReview(d, "a:7.2"), /not found/);
+    // several at once (a whole review session)
+    S.reviewChapter(d, "7", 4, "", T, { reviewId: "b" });
+    S.deleteReview(d, d.reviews.map((r) => r.id));
+    assert.equal(d.reviews.length, 0);
+  });
+
+  test("add, rename and delete subtopics", () => {
+    const d = fresh();
+    S.reviewChapter(d, "2", 4, "", T);
+    assert.equal(ch(d, "2").due, false);
+    S.addSubtopic(d, "2", "  Rationalising denominators ", { id: "new" });
+    let c = ch(d, "2");
+    assert.deepEqual(c.subtopics.map((x) => x.title), ["Using the laws of indices", "Working with surds", "Rationalising denominators"]);
+    assert.deepEqual([c.subtopics[2].num, c.subtopics[2].needs_rating, c.due, c.unrated_count], [3, true, true, 1]);
+    S.renameSubtopic(d, "new", "Rationalising the denominator");
+    assert.equal(ch(d, "2").subtopics[2].title, "Rationalising the denominator");
+    assert.throws(() => S.renameSubtopic(d, "new", "  "), /name/);
+    S.deleteSubtopic(d, "2.1");
+    assert.deepEqual([ch(d, "2").subtopic_count, d.reviews.filter((r) => r.subtopic_id === "2.1").length], [2, 0]);
+    S.deleteSubtopic(d, "new");
+    assert.throws(() => S.deleteSubtopic(d, "2.2"), /at least one subtopic/);
+    assert.throws(() => S.addSubtopic(d, "999", "x"), /Chapter not found/);
+  });
+});
+
 describe("due list", () => {
   test("sorted by priority; unlearnt never due; unrated learnt is due", () => {
     const d = fresh();
-    S.updateChapter(d, "1", { first_learnt: "2026-11-01", confidence: 4 }, T);
-    S.updateChapter(d, "2", { first_learnt: "2026-11-01", confidence: 1 }, T);
-    S.updateChapter(d, "3", { first_learnt: "2027-01-01", confidence: 5 }, T);
+    S.markLearnt(d, "1", 4, T, "2026-11-01");
+    S.markLearnt(d, "2", 1, T, "2026-11-01");
+    S.markLearnt(d, "3", 5, T, "2027-01-01");
     S.updateChapter(d, "4", { first_learnt: "2027-01-09" }, T);
     const due = S.dueList(d, T);
     const ids = due.chapters.map((c) => c.id);
@@ -112,6 +188,7 @@ describe("due list", () => {
     assert.ok(ids.indexOf("2") < ids.indexOf("1"));
     const pr = due.chapters.map((c) => c.priority);
     assert.deepEqual(pr, [...pr].sort((a, b) => b - a));
+    assert.deepEqual(due.chapters.find((c) => c.id === "4").due_subtopics.map((x) => x.needs_rating), [true, true, true, true]);
   });
 
   test("next to learn: first unlearnt chapter in each book", () => {
@@ -195,7 +272,10 @@ describe("dashboard and settings", () => {
     S.reviewChapter(d, "2", 2, "", "2027-01-05");
     S.updateChapter(d, "2", { exercises_status: "done" }, "2027-01-05");
     const db = S.dashboard(d, "2027-01-05");
-    assert.deepEqual([db.streak, db.reviews_this_week], [2, 2]);
+    assert.deepEqual([db.streak, db.reviews_this_week], [2, 7]); // 5 + 2 subtopics
+    assert.equal(db.weakest_subtopics.length, 7);
+    assert.deepEqual([db.weakest_subtopics[0].chapter_id, db.weakest_subtopics[0].confidence, db.weakest_subtopics[6].confidence], ["1", 1, 2]);
+    assert.equal(db.subtopics_due, 0);
     assert.equal(db.by_strand.length, 6);
     assert.equal(db.by_book.length, 6);
     assert.deepEqual([db.by_book[0].name, db.by_book[0].learnt, db.by_book[0].exercises_done], ["Maths Y1 (red)", 2, 1]);
@@ -249,11 +329,35 @@ describe("import", () => {
     };
     const d = S.normalize(exp);
     const c2 = S.getChapter(d, "2", T);
-    assert.deepEqual([c2.first_learnt, c2.learnt, c2.marks_lost, c2.review_count], ["2026-11-11", true, 3, 1]);
+    // the chapter review counts for both of its subtopics
+    assert.deepEqual([c2.first_learnt, c2.learnt, c2.marks_lost, c2.review_count, c2.confidence, c2.next_review],
+      ["2026-11-11", true, 3, 2, 2, "2026-11-18"]);
+    assert.deepEqual(d.reviews.map((r) => r.id), ["1:2.1", "1:2.2"]);
     assert.equal(S.getChapter(d, "1", T).first_learnt, null);
     assert.deepEqual(S.settingsOf(d).priority_weights, { confidence: 40, overdue: 20, marks: 30, learnt: 10 });
     assert.deepEqual(Object.keys(d.settings), ["priority_weights"]);
     assert.equal(d.mistakes[0].retest_passed, false);
+  });
+
+  test("trackers from before subtopics are upgraded, the same way every time", () => {
+    const old = fresh();
+    delete old.subtopics;
+    old.version = 2;
+    for (const c of old.chapters) c.confidence = null;
+    Object.assign(old.chapters[4], { first_learnt: "2027-01-01", confidence: 3 });
+    Object.assign(old.chapters[5], { first_learnt: "2027-01-02", confidence: 4 });
+    old.reviews.push({ id: "r1", chapter_id: "5", reviewed_on: "2027-01-05", confidence_before: 2, confidence_after: 3, note: "n", created_at: "t" });
+    const d = S.normalize(JSON.parse(JSON.stringify(old)));
+    assert.equal(d.version, 3);
+    assert.equal(d.subtopics.length, 332);
+    assert.ok(d.chapters.every((c) => !("confidence" in c)));
+    assert.equal(d.reviews.length, 6);
+    assert.deepEqual(d.reviews[0], { id: "r1:5.1", chapter_id: "5", subtopic_id: "5.1", reviewed_on: "2027-01-05",
+      confidence_before: 2, confidence_after: 3, note: "n", created_at: "t" });
+    assert.deepEqual([ch(d, "5").confidence, ch(d, "5").next_review], [3, "2027-01-19"]);
+    assert.deepEqual([ch(d, "6").confidence, ch(d, "6").next_review, ch(d, "6").review_count], [4, "2027-02-01", 0]);
+    assert.deepEqual(S.normalize(JSON.parse(JSON.stringify(d))), d);
+    assert.deepEqual(S.normalize(JSON.parse(JSON.stringify(old))), d);
   });
 
   test("rejects files that aren't trackers or have broken references", () => {
@@ -261,16 +365,18 @@ describe("import", () => {
     const d = fresh();
     d.reviews.push({ id: "r", chapter_id: "999", reviewed_on: T, confidence_before: null, confidence_after: 3, note: "", created_at: "" });
     assert.throws(() => S.normalize(d), /pointing at chapters/);
+    const e = fresh();
+    e.reviews.push({ id: "r", chapter_id: "2", subtopic_id: "3.1", reviewed_on: T, confidence_before: null, confidence_after: 3, note: "", created_at: "" });
+    assert.throws(() => S.normalize(e), /pointing at chapters/);
   });
 
   test("replace one table from CSV rows", () => {
     const d = fresh();
     const rows = d.chapters.map((c) => Object.fromEntries(Object.entries(c).map(([k, v]) => [k, v === null ? "" : String(v)])));
     rows[1].notes = "edited in a spreadsheet";
-    rows[0].confidence = "4";
     S.replaceTable(d, "chapters", rows);
     assert.equal(S.getChapter(d, "2", T).notes, "edited in a spreadsheet");
-    assert.equal(S.getChapter(d, "1", T).confidence, 4);
+    assert.equal(d.subtopics.length, 332);
     assert.throws(() => S.replaceTable(d, "nope", []), /Unknown table/);
     assert.throws(() => S.replaceTable(d, "chapters", []), /empty/);
   });
@@ -341,6 +447,18 @@ describe("question bank", () => {
     // deleting the question keeps the mistakes but unlinks them
     S.deleteBankQuestion(d, "q");
     assert.deepEqual([d.questions.length, d.mistakes.length, d.mistakes[0].question_id], [0, 2, null]);
+  });
+
+  test("subtopics and their reviews survive a CSV round trip", async () => {
+    const { docToCSVs, parseCSV } = await import("../../web/js/files.js");
+    const d = fresh();
+    S.markLearnt(d, "4", 3, T, "2027-01-02");
+    S.reviewSubtopics(d, "4", { "4.2": 2 }, "division", T, { reviewId: "r" });
+    S.renameSubtopic(d, "4.4", 'Sketching, "roughly"');
+    const csv = docToCSVs(d);
+    const copy = fresh();
+    for (const t of ["chapters", "subtopics", "reviews"]) S.replaceTable(copy, t, parseCSV(csv[`${t}.csv`]));
+    assert.deepEqual([copy.chapters, copy.subtopics, copy.reviews], [d.chapters, d.subtopics, d.reviews]);
   });
 
   test("questions survive JSON and CSV round trips; old trackers without questions still load", async () => {

@@ -3,10 +3,11 @@
 // an Error with a readable message if the input is invalid. Anything random (new ids, the
 // current time) is passed in, so an op can be replayed on a newer copy of the document.
 import * as L from "./logic.js";
+import { SYLLABUS } from "./syllabus.js";
 
 export const FORMAT = "revision-tracker";
-export const DOC_VERSION = 2;
-export const TABLES = ["chapters", "reviews", "papers", "paper_questions", "boundaries", "mistakes", "questions"];
+export const DOC_VERSION = 3;
+export const TABLES = ["chapters", "subtopics", "reviews", "papers", "paper_questions", "boundaries", "mistakes", "questions"];
 // How a question in the question bank went.
 export const BANK_STATUSES = ["not_tried", "wrong", "partly", "right"];
 const STATUS_FIELDS = ["summary_status", "exercises_status", "examq_status"];
@@ -23,20 +24,39 @@ export const newId = () =>
 // ---------------------------------------------------------------- documents
 
 export function newTracker(seed) {
+  const chapters = seed.map((c, i) => ({
+    id: String(i + 1), strand: c.strand, book: c.book, ch_num: c.ch_num, title: c.title,
+    sections: c.sections || "", level: c.level || "",
+    summary_status: "not_started", exercises_status: "not_started", examq_status: "not_started",
+    first_learnt: null, notes: "", sort_order: i + 1,
+  }));
   return {
     format: FORMAT, version: DOC_VERSION,
-    chapters: seed.map((c, i) => ({
-      id: String(i + 1), strand: c.strand, book: c.book, ch_num: c.ch_num, title: c.title,
-      sections: c.sections || "", level: c.level || "",
-      summary_status: "not_started", exercises_status: "not_started", examq_status: "not_started",
-      confidence: null, first_learnt: null, notes: "", sort_order: i + 1,
-    })),
+    chapters,
+    subtopics: chapters.flatMap((c) => defaultSubtopics(c)),
     reviews: [], papers: [], paper_questions: [], boundaries: [], mistakes: [], questions: [], settings: {},
   };
 }
 
+// A chapter's subtopics (its textbook sections) from the syllabus. Chapters that aren't in it
+// get theirs from the chapter's section list, or a single subtopic named after the chapter.
+export function defaultSubtopics(c, confidence = null) {
+  let items = SYLLABUS[`${c.book}|${c.ch_num}`];
+  if (!items) items = String(c.sections || "").split(";").map((x) => x.trim()).filter(Boolean);
+  if (!items.length) items = [c.title || "Whole chapter"];
+  return items.map((item, i) => {
+    const [title, aOnly] = Array.isArray(item) ? item : [item, 0];
+    return { id: `${c.id}.${i + 1}`, chapter_id: c.id, num: i + 1, title, a_only: Boolean(aOnly), confidence };
+  });
+}
+
+const truthy = (v) => [true, 1, "1", "true", "TRUE", "True"].includes(v);
+
 // Accepts this website's document or an export from the desktop app (tables of rows with
 // numeric ids, settings as key/value rows), and returns a clean, current document.
+// Older documents had one schedule per chapter: each chapter gets its subtopics, and each old
+// chapter review becomes a review of every subtopic in it, so nothing is lost. (The new ids are
+// worked out from the old ones, so every device upgrades a document the same way.)
 export function normalize(raw) {
   if (!raw || typeof raw !== "object" || raw.format !== FORMAT) fail("That isn't a Revision Tracker file.");
   const t = raw.tables || raw;
@@ -50,11 +70,15 @@ export function normalize(raw) {
       summary_status: L.STATUSES.includes(c.summary_status) ? c.summary_status : "not_started",
       exercises_status: L.STATUSES.includes(c.exercises_status) ? c.exercises_status : "not_started",
       examq_status: L.STATUSES.includes(c.examq_status) ? c.examq_status : "not_started",
-      confidence: num(c.confidence), first_learnt: str(c.first_learnt), notes: String(c.notes || ""),
+      first_learnt: str(c.first_learnt), notes: String(c.notes || ""),
       sort_order: num(c.sort_order) ?? i + 1,
     })),
+    subtopics: rows("subtopics").map((x, i) => ({
+      id: String(x.id), chapter_id: String(x.chapter_id), num: num(x.num) ?? i + 1, title: String(x.title || "Untitled"),
+      a_only: truthy(x.a_only), confidence: num(x.confidence),
+    })),
     reviews: rows("reviews").map((r) => ({
-      id: String(r.id), chapter_id: String(r.chapter_id), reviewed_on: String(r.reviewed_on).slice(0, 10),
+      id: String(r.id), chapter_id: String(r.chapter_id), subtopic_id: str(r.subtopic_id), reviewed_on: String(r.reviewed_on).slice(0, 10),
       confidence_before: num(r.confidence_before), confidence_after: num(r.confidence_after),
       note: String(r.note || ""), created_at: String(r.created_at || ""),
     })),
@@ -73,7 +97,7 @@ export function normalize(raw) {
     mistakes: rows("mistakes").map((m) => ({
       id: String(m.id), logged_on: String(m.logged_on).slice(0, 10), chapter_id: str(m.chapter_id),
       source: String(m.source || ""), what_wrong: String(m.what_wrong || ""), correct_method: String(m.correct_method || ""),
-      retest_on: str(m.retest_on), retest_passed: [true, 1, "1", "true", "TRUE", "True"].includes(m.retest_passed),
+      retest_on: str(m.retest_on), retest_passed: truthy(m.retest_passed),
       passed_on: str(m.passed_on), question_id: str(m.question_id),
     })),
     questions: rows("questions").map((q) => ({
@@ -92,6 +116,15 @@ export function normalize(raw) {
     s.priority_weights = { ...rest, learnt: taught };
   }
   for (const [k, v] of Object.entries(s)) if (k in L.DEFAULT_SETTINGS) doc.settings[k] = v;
+  // chapters from before subtopics: add them, rated as the chapter was
+  const legacyConf = Object.fromEntries(rows("chapters").map((c) => [String(c.id), num(c.confidence)]));
+  const hasSubs = new Set(doc.subtopics.map((x) => x.chapter_id));
+  for (const c of doc.chapters) if (!hasSubs.has(c.id)) doc.subtopics.push(...defaultSubtopics(c, legacyConf[c.id] ?? null));
+  // a review of a whole chapter (from before subtopics) counts for each of its subtopics
+  const subsOf = {};
+  for (const x of doc.subtopics) (subsOf[x.chapter_id] ||= []).push(x);
+  doc.reviews = doc.reviews.flatMap((r) => (r.subtopic_id !== null ? [r]
+    : subsOf[r.chapter_id] ? subsOf[r.chapter_id].map((x) => ({ ...r, id: `${r.id}:${x.id}`, subtopic_id: x.id })) : [r]));
   // anything reviewed was learnt by its first review
   for (const c of doc.chapters) {
     if (!c.first_learnt) {
@@ -117,8 +150,10 @@ function fileList(v) {
 function checkReferences(doc) {
   const ch = new Set(doc.chapters.map((c) => c.id));
   const pp = new Set(doc.papers.map((p) => p.id));
+  const subs = new Map(doc.subtopics.map((x) => [x.id, x]));
   let bad = 0;
-  bad += doc.reviews.filter((r) => !ch.has(r.chapter_id)).length;
+  bad += doc.subtopics.filter((x) => !ch.has(x.chapter_id)).length;
+  bad += doc.reviews.filter((r) => !ch.has(r.chapter_id) || subs.get(r.subtopic_id)?.chapter_id !== r.chapter_id).length;
   bad += doc.paper_questions.filter((q) => !pp.has(q.paper_id) || (q.chapter_id !== null && !ch.has(q.chapter_id))).length;
   bad += doc.mistakes.filter((m) => m.chapter_id !== null && !ch.has(m.chapter_id)).length;
   const qq = new Set(doc.questions.map((q) => q.id));
@@ -155,44 +190,89 @@ function lossStats(doc) {
   return { lost, top };
 }
 
+// Reviews of each subtopic, oldest first.
+const reviewOrder = (a, b) => a.reviewed_on.localeCompare(b.reviewed_on) || String(a.created_at).localeCompare(String(b.created_at));
+function reviewsBySubtopic(doc) {
+  const out = {};
+  for (const r of doc.reviews) (out[r.subtopic_id] ||= []).push(r);
+  for (const list of Object.values(out)) list.sort(reviewOrder);
+  return out;
+}
+
+function subtopicsBy(doc) {
+  const out = {};
+  for (const x of doc.subtopics) (out[x.chapter_id] ||= []).push(x);
+  for (const list of Object.values(out)) list.sort((a, b) => a.num - b.num);
+  return out;
+}
+
 export function listChapters(doc, today) {
   const settings = settingsOf(doc);
-  const last = {};
-  for (const r of doc.reviews) {
-    const e = (last[r.chapter_id] ||= { last: null, n: 0 });
-    e.n++;
-    if (!e.last || r.reviewed_on > e.last) e.last = r.reviewed_on;
-  }
+  const revs = reviewsBySubtopic(doc);
+  const subs = subtopicsBy(doc);
   const { lost, top } = lossStats(doc);
   const qCount = {};
   for (const q of doc.questions || []) qCount[q.chapter_id] = (qCount[q.chapter_id] || 0) + 1;
   return [...doc.chapters]
     .sort((a, b) => a.sort_order - b.sort_order)
-    .map((c) => ({ ...enrich(c, last[c.id] || { last: null, n: 0 }, lost[c.id] || 0, top[c.id] || null, settings, today),
+    .map((c) => ({ ...enrich(c, subs[c.id] || [], revs, lost[c.id] || 0, top[c.id] || null, settings, today),
                    question_count: qCount[c.id] || 0 }));
 }
 
-function enrich(c, rv, marksLost, topError, settings, today) {
+// Each subtopic has its own schedule: from its last review, or from the day the chapter was
+// first learnt. Its confidence is the one from its latest review (or the rating it was given
+// when the chapter was learnt).
+function enrichSubtopic(x, c, rv, marksLost, settings, today) {
+  const last = rv.length ? rv[rv.length - 1] : null;
+  const confidence = last ? last.confidence_after : x.confidence;
   const learnt = Boolean(c.first_learnt);
-  const anchor = L.scheduleAnchor(rv.last, c.first_learnt);
-  const { due } = L.isDue(anchor, c.confidence, learnt, settings.intervals, today);
-  const nxt = learnt ? L.nextReview(anchor, c.confidence, settings.intervals) : null;
-  const pr = L.priority(c.confidence, anchor, learnt, marksLost, settings, today);
+  const lastOn = last ? last.reviewed_on : null;
+  const anchor = L.scheduleAnchor(lastOn, c.first_learnt);
+  const { due } = L.isDue(anchor, confidence, learnt, settings.intervals, today);
+  const nxt = learnt ? L.nextReview(anchor, confidence, settings.intervals) : null;
+  const pr = L.priority(confidence, anchor, learnt, marksLost, settings, today);
+  return {
+    ...x, confidence, learnt, last_reviewed: lastOn, review_count: rv.length, days_since: L.daysSince(lastOn, today),
+    next_review: nxt, days_until_review: nxt === null ? null : L.daysBetween(today, nxt), due,
+    needs_rating: learnt && confidence === null, overdue_days: due && nxt ? L.daysBetween(nxt, today) : due ? 0 : null,
+    priority: pr.score, priority_parts: pr.components,
+  };
+}
+
+// A chapter sums up its subtopics: average confidence, earliest next review, due if any
+// subtopic is due, and the priority of its most urgent subtopic.
+function enrich(c, subList, revs, marksLost, topError, settings, today) {
+  const learnt = Boolean(c.first_learnt);
+  const subtopics = subList.map((x) => enrichSubtopic(x, c, revs[x.id] || [], marksLost, settings, today));
+  const rated = subtopics.map((x) => x.confidence).filter((v) => v !== null);
+  const confidence = rated.length ? L.round(rated.reduce((a, b) => a + b, 0) / rated.length, 1) : null;
+  const nexts = subtopics.map((x) => x.next_review).filter(Boolean).sort();
+  const lasts = subtopics.map((x) => x.last_reviewed).filter(Boolean).sort();
+  const dueSubs = subtopics.filter((x) => x.due);
+  const urgent = subtopics.reduce((a, b) => (!a || b.priority > a.priority ? b : a), null);
+  const nxt = nexts[0] || null, last = lasts.length ? lasts[lasts.length - 1] : null;
   return {
     ...c,
     learnt,
     days_since_learnt: L.daysSince(c.first_learnt, today),
-    last_reviewed: rv.last,
-    review_count: rv.n,
-    days_since: L.daysSince(rv.last, today),
+    subtopics,
+    subtopic_count: subtopics.length,
+    confidence,
+    min_confidence: rated.length ? Math.min(...rated) : null,
+    due_count: dueSubs.length,
+    unrated_count: subtopics.filter((x) => x.needs_rating).length,
+    last_reviewed: last,
+    review_count: subtopics.reduce((a, x) => a + x.review_count, 0),
+    days_since: L.daysSince(last, today),
     next_review: nxt,
     days_until_review: nxt === null ? null : L.daysBetween(today, nxt),
-    due,
+    due: dueSubs.length > 0,
+    overdue_days: dueSubs.length ? Math.max(...dueSubs.map((x) => x.overdue_days)) : null,
     marks_lost: L.round(marksLost, 1),
     top_error: topError,
-    priority: pr.score,
-    priority_parts: pr.components,
-    weakness: L.weakness(c.confidence, marksLost, settings),
+    priority: urgent ? urgent.priority : 0,
+    priority_parts: urgent ? urgent.priority_parts : { confidence: 0, overdue: 0, marks: 0, learnt: 0 },
+    weakness: L.weakness(confidence, marksLost, settings),
   };
 }
 
@@ -203,10 +283,13 @@ export function getChapter(doc, id, today) {
 export function chapterHistory(doc, id, today) {
   const chapter = getChapter(doc, id, today);
   const papers = Object.fromEntries(doc.papers.map((p) => [p.id, p]));
+  const subs = Object.fromEntries(chapter.subtopics.map((x) => [x.id, x]));
   const desc = (k) => (a, b) => (a[k] < b[k] ? 1 : a[k] > b[k] ? -1 : 0);
   return {
     chapter,
-    reviews: doc.reviews.filter((r) => r.chapter_id === chapter.id).sort((a, b) => desc("reviewed_on")(a, b) || desc("created_at")(a, b)),
+    reviews: doc.reviews.filter((r) => r.chapter_id === chapter.id)
+      .map((r) => ({ ...r, subtopic_title: subs[r.subtopic_id]?.title || "", subtopic_num: subs[r.subtopic_id]?.num ?? null }))
+      .sort((a, b) => desc("reviewed_on")(a, b) || desc("created_at")(a, b) || a.subtopic_num - b.subtopic_num),
     questions: doc.paper_questions.filter((q) => q.chapter_id === chapter.id)
       .map((q) => ({ ...q, paper_code: papers[q.paper_id]?.paper_code, series: papers[q.paper_id]?.series, sat_on: papers[q.paper_id]?.sat_on }))
       .sort(desc("sat_on")),
@@ -215,15 +298,22 @@ export function chapterHistory(doc, id, today) {
 }
 
 function chapterOrFail(doc, id) { return byId(doc.chapters, id) || fail("Chapter not found"); }
+const subtopicOrFail = (doc, id) => byId(doc.subtopics, id) || fail("Subtopic not found");
+const chapterSubtopics = (doc, chapterId) => doc.subtopics.filter((x) => x.chapter_id === chapterId).sort((a, b) => a.num - b.num);
+
+function checkDate(value, what) {
+  let d = null;
+  try { d = L.parseDMY(value); } catch (e) { fail(`${what}: ${e.message}`); }
+  if (!d) fail(`${what} is required`);
+  return d;
+}
 
 function checkFirstLearnt(doc, chapterId, value, today) {
-  const firstReview = doc.reviews.filter((r) => r.chapter_id === chapterId).map((r) => r.reviewed_on).sort()[0];
   if (value === null || value === undefined || value === "") {
-    if (firstReview) fail("You've already reviewed this chapter, so it can't be marked as not learnt. Undo its reviews first.");
+    if (doc.reviews.some((r) => r.chapter_id === chapterId)) fail("You've already reviewed this chapter, so it can't be marked as not learnt. Undo its reviews first.");
     return null;
   }
-  let d;
-  try { d = L.parseDate(value); } catch { fail("First learnt must be a date"); }
+  const d = checkDate(value, "First learnt");
   if (d > today) fail("First learnt can't be in the future");
   return d;
 }
@@ -237,11 +327,6 @@ export function updateChapter(doc, id, data, today) {
       f[k] = data[k];
     }
   }
-  if ("confidence" in data) {
-    const v = data.confidence;
-    if (v !== null && !(Number.isInteger(v) && v >= 1 && v <= 5)) fail("Confidence must be 1-5 or empty");
-    f.confidence = v;
-  }
   if ("notes" in data) f.notes = String(data.notes ?? "");
   if ("first_learnt" in data) f.first_learnt = checkFirstLearnt(doc, c.id, data.first_learnt, today);
   if (!Object.keys(f).length) fail("Nothing to update");
@@ -251,38 +336,107 @@ export function updateChapter(doc, id, data, today) {
 
 const checkConfidence = (v) => { if (!(Number.isInteger(v) && v >= 1 && v <= 5)) fail("Confidence must be 1-5"); };
 
-// "Learnt today": today is the day you first learnt it; the confidence schedules the first review.
+// One confidence for every subtopic, or {subtopicId: confidence} for some of them.
+function ratingsFor(doc, c, confidence) {
+  const subs = chapterSubtopics(doc, c.id);
+  const ratings = confidence !== null && typeof confidence === "object" ? confidence : Object.fromEntries(subs.map((x) => [x.id, confidence]));
+  const out = [];
+  for (const [sid, conf] of Object.entries(ratings)) {
+    const x = subs.find((y) => y.id === sid) || fail("That subtopic isn't in this chapter");
+    checkConfidence(conf);
+    out.push([x, conf]);
+  }
+  return out;
+}
+
+// "Learnt": the day you first learnt the chapter (today unless you say otherwise), and how
+// confident you are with each subtopic, which schedules each one's first review.
 export function markLearnt(doc, id, confidence, today, on = today) {
-  checkConfidence(confidence);
   const c = chapterOrFail(doc, id);
-  if (c.first_learnt) fail(`Already marked as learnt on ${c.first_learnt}`);
-  let d;
-  try { d = L.parseDate(on); } catch { fail("Learnt on must be a date"); }
-  if (!d) fail("Learnt on must be a date");
+  if (c.first_learnt) fail(`Already marked as learnt on ${L.formatDMY(c.first_learnt)}`);
+  const ratings = ratingsFor(doc, c, confidence);
+  if (ratings.length < chapterSubtopics(doc, c.id).length) fail("Rate every subtopic");
+  const d = checkDate(on, "Learnt on");
   if (d > today) fail("Learnt on can't be in the future");
   c.first_learnt = d;
-  c.confidence = confidence;
+  for (const [x, conf] of ratings) x.confidence = conf;
   return doc;
 }
 
-// "Reviewed today": log a review dated today and set the new confidence.
-export function reviewChapter(doc, id, confidence, note, today, { reviewId = newId(), now = new Date().toISOString() } = {}) {
-  checkConfidence(confidence);
-  const c = chapterOrFail(doc, id);
-  doc.reviews.push({ id: reviewId, chapter_id: c.id, reviewed_on: today, confidence_before: c.confidence,
-                     confidence_after: confidence, note: note || "", created_at: now });
-  c.confidence = confidence;
-  if (!c.first_learnt) c.first_learnt = today; // reviewing it means you've learnt it by now
+// Log a review of some of a chapter's subtopics, each with its new confidence, on a given day
+// (today unless you say otherwise). Each subtopic's next review is scheduled from its own
+// latest review.
+export function reviewSubtopics(doc, chapterId, ratings, note, today, { on = today, reviewId = newId(), now = new Date().toISOString() } = {}) {
+  const c = chapterOrFail(doc, chapterId);
+  const list = ratingsFor(doc, c, ratings ?? {});
+  if (!list.length) fail("Tick at least one subtopic you reviewed");
+  const d = checkDate(on, "Review date");
+  if (d > today) fail("A review can't be in the future");
+  if (c.first_learnt && d < c.first_learnt) fail(`That's before you first learnt this chapter (${L.formatDMY(c.first_learnt)}). Change the first learnt date first.`);
+  const revs = reviewsBySubtopic(doc);
+  for (const [x, conf] of list) {
+    const earlier = (revs[x.id] || []).filter((r) => r.reviewed_on <= d);
+    doc.reviews.push({ id: `${reviewId}:${x.id}`, chapter_id: c.id, subtopic_id: x.id, reviewed_on: d,
+                       confidence_before: earlier.length ? earlier[earlier.length - 1].confidence_after : x.confidence,
+                       confidence_after: conf, note: String(note || ""), created_at: now });
+  }
+  if (!c.first_learnt) c.first_learnt = d; // reviewing it means you'd learnt it by then
   return doc;
 }
 
-// Remove a review logged by mistake; undoing the latest one restores the previous confidence.
+// Review every subtopic of a chapter at the same confidence, today.
+export function reviewChapter(doc, id, confidence, note, today, opts = {}) {
+  return reviewSubtopics(doc, id, confidence, note, today, opts);
+}
+
+// Change a review's date or note.
+export function updateReview(doc, id, data, today) {
+  const r = byId(doc.reviews, id) || fail("Review not found");
+  const f = {};
+  if ("reviewed_on" in data) {
+    const d = checkDate(data.reviewed_on, "Review date");
+    if (d > today) fail("A review can't be in the future");
+    const c = chapterOrFail(doc, r.chapter_id);
+    if (c.first_learnt && d < c.first_learnt) fail(`That's before you first learnt this chapter (${L.formatDMY(c.first_learnt)})`);
+    f.reviewed_on = d;
+  }
+  if ("note" in data) f.note = String(data.note || "");
+  if (!Object.keys(f).length) fail("Nothing to update");
+  Object.assign(r, f);
+  return doc;
+}
+
+// Remove reviews logged by mistake (each subtopic's confidence goes back to its previous review).
 export function deleteReview(doc, reviewId) {
-  const r = byId(doc.reviews, reviewId) || fail("Review not found");
-  const latest = doc.reviews.filter((x) => x.chapter_id === r.chapter_id)
-    .sort((a, b) => (a.reviewed_on + a.created_at < b.reviewed_on + b.created_at ? 1 : -1))[0];
-  doc.reviews = doc.reviews.filter((x) => x.id !== r.id);
-  if (latest && latest.id === r.id) chapterOrFail(doc, r.chapter_id).confidence = r.confidence_before;
+  const ids = new Set((Array.isArray(reviewId) ? reviewId : [reviewId]).map(String));
+  if (![...ids].every((id) => byId(doc.reviews, id))) fail("Review not found");
+  doc.reviews = doc.reviews.filter((x) => !ids.has(x.id));
+  return doc;
+}
+
+// ---------------------------------------------------------------- subtopics
+
+const cleanTitle = (t) => String(t ?? "").trim().slice(0, 200) || fail("Give the subtopic a name");
+
+export function addSubtopic(doc, chapterId, title, { id = newId() } = {}) {
+  const c = chapterOrFail(doc, chapterId);
+  const t = cleanTitle(title);
+  const num = Math.max(0, ...chapterSubtopics(doc, c.id).map((x) => x.num)) + 1;
+  doc.subtopics.push({ id, chapter_id: c.id, num, title: t, a_only: false, confidence: null });
+  return doc;
+}
+
+export function renameSubtopic(doc, id, title) {
+  subtopicOrFail(doc, id).title = cleanTitle(title);
+  return doc;
+}
+
+// Deleting a subtopic deletes its reviews too.
+export function deleteSubtopic(doc, id) {
+  const x = subtopicOrFail(doc, id);
+  if (chapterSubtopics(doc, x.chapter_id).length === 1) fail("A chapter needs at least one subtopic");
+  doc.subtopics = doc.subtopics.filter((y) => y.id !== x.id);
+  doc.reviews = doc.reviews.filter((r) => r.subtopic_id !== x.id);
   return doc;
 }
 
@@ -291,7 +445,8 @@ export function deleteReview(doc, reviewId) {
 export function dueList(doc, today) {
   const all = listChapters(doc, today);
   const chapters = all.filter((c) => c.due)
-    .sort((a, b) => b.priority - a.priority || (a.next_review || "").localeCompare(b.next_review || "") || a.sort_order - b.sort_order);
+    .sort((a, b) => b.priority - a.priority || (b.overdue_days - a.overdue_days) || a.sort_order - b.sort_order)
+    .map((c) => ({ ...c, due_subtopics: c.subtopics.filter((x) => x.due).sort((a, b) => b.priority - a.priority || a.num - b.num) }));
   const titles = Object.fromEntries(doc.chapters.map((c) => [c.id, c]));
   const retests = doc.mistakes
     .filter((m) => !m.retest_passed && m.retest_on && m.retest_on <= today)
@@ -754,8 +909,15 @@ export function dashboard(doc, today) {
     .sort((a, b) => b.weakness - a.weakness || a.sort_order - b.sort_order).slice(0, 10)
     .map(({ id, title, strand, book, ch_num, confidence, marks_lost, top_error, weakness, priority }) =>
       ({ id, title, strand, book, ch_num, confidence, marks_lost, top_error, weakness, priority }));
+  // subtopics you're least sure of (rated 1-2), most urgent first
+  const weakSubs = chapters.flatMap((c) => c.subtopics.filter((x) => x.learnt && x.confidence !== null && x.confidence <= 2)
+    .map((x) => ({ id: x.id, title: x.title, chapter_id: c.id, chapter_title: c.title, book: c.book, ch_num: c.ch_num,
+                   confidence: x.confidence, next_review: x.next_review, due: x.due, priority: x.priority })))
+    .sort((a, b) => a.confidence - b.confidence || b.priority - a.priority).slice(0, 10);
   return {
     today,
+    weakest_subtopics: weakSubs,
+    subtopics_due: chapters.reduce((a, c) => a + c.due_count, 0),
     by_strand: group((c) => c.strand, uniq("strand")),
     by_book: group((c) => c.book, uniq("book")),
     pace: L.learningPace(chapters.map((c) => c.first_learnt), today, L.learnTarget(settings)),

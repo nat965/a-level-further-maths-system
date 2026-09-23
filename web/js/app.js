@@ -21,6 +21,8 @@ const S = {
   viewerId: null,      // question open in the viewer
   qFilters: { q: "", strand: "", chapter: "", status: "" },
   mistakeFilter: "open",
+  expanded: new Set(), // chapters whose subtopics are shown in the chapters table
+  editSubs: false,     // editing the subtopic list in the chapter panel
 };
 
 // ------------------------------------------------------------------ helpers
@@ -32,9 +34,16 @@ const STATUS_LABEL = { not_started: "Not started", in_progress: "In progress", d
 const CONF_LABEL = { 1: "Shaky", 2: "Weak", 3: "OK", 4: "Good", 5: "Exam-ready" };
 
 function parseISO(s) { if (!s) return null; const [y, m, d] = s.slice(0, 10).split("-").map(Number); return new Date(y, m - 1, d); }
+// Full dates are dd/mm/yyyy; withYear = false gives a short "Sun, 10 Jan" for dates close to today.
 function fmtDate(s, withYear = true) {
   const d = parseISO(s); if (!d) return "—";
-  return d.toLocaleDateString("en-GB", withYear ? { day: "numeric", month: "short", year: "numeric" } : { weekday: "short", day: "numeric", month: "short" });
+  return withYear ? L.formatDMY(s) : d.toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" });
+}
+// A date typed as dd/mm/yyyy, with a calendar button (a hidden native date picker) beside it.
+function dateField(iso, attrs = "", { max = S.boot.today } = {}) {
+  return `<span class="dmy"><input type="text" inputmode="numeric" autocomplete="off" placeholder="dd/mm/yyyy" value="${iso ? L.formatDMY(iso) : ""}" ${attrs}>` +
+    `<button type="button" class="ghost cal" data-action="pick-date" tabindex="-1" aria-label="Pick a date" title="Pick a date">📅</button>` +
+    `<input type="date" class="cal-native" tabindex="-1" aria-hidden="true" ${max ? `max="${max}"` : ""}></span>`;
 }
 function addDays(iso, n) { const d = parseISO(iso); d.setDate(d.getDate() + n); return toISO(d); }
 function toISO(d) { return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; }
@@ -78,9 +87,13 @@ async function api(method, path, body = {}) {
   if ((r = m(/^\/api\/chapters\/([^/]+)\/learnt$/))) return change((d) => svc.markLearnt(d, r[1], body.confidence, T, body.on || T));
   if ((r = m(/^\/api\/chapters\/([^/]+)\/review$/))) {
     const now = new Date().toISOString();
-    return change((d) => svc.reviewChapter(d, r[1], body.confidence, body.note, T, { reviewId: id, now }));
+    return change((d) => svc.reviewSubtopics(d, r[1], body.ratings, body.note, T, { on: body.on || T, reviewId: id, now }));
   }
-  if ((r = m(/^\/api\/reviews\/([^/]+)$/)) && method === "DELETE") return change((d) => svc.deleteReview(d, r[1]));
+  if ((r = m(/^\/api\/chapters\/([^/]+)\/subtopics$/))) return change((d) => svc.addSubtopic(d, r[1], body.title, { id }));
+  if ((r = m(/^\/api\/subtopics\/([^/]+)$/)) && method === "PATCH") return change((d) => svc.renameSubtopic(d, r[1], body.title));
+  if ((r = m(/^\/api\/subtopics\/([^/]+)$/)) && method === "DELETE") return change((d) => svc.deleteSubtopic(d, r[1]));
+  if ((r = m(/^\/api\/reviews\/([^/]+)$/)) && method === "PATCH") return change((d) => svc.updateReview(d, r[1], body, T));
+  if (path === "/api/reviews" && method === "DELETE") return change((d) => svc.deleteReview(d, body.ids));
   if (path === "/api/papers" && method === "POST") return change((d) => svc.createPaper(d, body, { id }), (d) => svc.listPapers(d).find((p) => p.id === id));
   if ((r = m(/^\/api\/papers\/([^/]+)$/)) && method === "DELETE") return change((d) => svc.deletePaper(d, r[1]));
   if ((r = m(/^\/api\/papers\/([^/]+)\/questions$/))) return change((d) => svc.addQuestion(d, r[1], body, { id }));
@@ -113,16 +126,20 @@ function toast(msg, kind = "") {
 }
 async function guard(fn) { try { return await fn(); } catch (e) { toast(e.message, "error"); throw e; } }
 
-function confBadge(c) { return c ? `<span class="conf c${c}" title="${CONF_LABEL[c]}">${c}</span>` : `<span class="conf" title="Not rated">–</span>`; }
+function confBadge(c) {
+  if (!c) return `<span class="conf" title="Not rated">–</span>`;
+  const r = Math.round(c);
+  return `<span class="conf c${r}" title="${Number.isInteger(c) ? CONF_LABEL[c] : `Average ${c}`}">${c}</span>`;
+}
 function prioBadge(p) { return `<span class="prio" title="Priority score (0–100)"><span class="bar"><i style="width:${Math.min(100, p)}%"></i></span>${p.toFixed(0)}</span>`; }
 function learntPill(c) { return c.learnt ? `<span class="pill good">✓ Learnt ${fmtDate(c.first_learnt)}</span>` : `<span class="pill">Not learnt yet</span>`; }
-function dueReason(c) {
-  if (c.next_review) {
-    const late = -c.days_until_review;
-    return late > 0 ? `<span class="pill bad">⚠ ${plural(late, "day")} overdue</span>` : `<span class="pill warn">● Due today</span>`;
-  }
-  return `<span class="pill warn">● Learnt — rate your confidence</span>`;
+// Why a chapter or subtopic is due.
+function dueReason(x) {
+  if (x.subtopics && x.unrated_count && x.unrated_count === x.due_count) return `<span class="pill warn">● Learnt — rate its subtopics</span>`;
+  if (x.needs_rating) return `<span class="pill warn">● Rate it</span>`;
+  return x.overdue_days > 0 ? `<span class="pill bad">⚠ ${plural(x.overdue_days, "day")} overdue</span>` : `<span class="pill warn">● Due today</span>`;
 }
+function aOnly(x) { return x.a_only ? ` <span class="pill small" title="A-level only (not in AS)">A only</span>` : ""; }
 function statusSelect(c, field) {
   return `<select class="st-${c[field]}" data-change="status" data-id="${c.id}" data-field="${field}" aria-label="${field.replace("_status", "")} status">` +
     S.boot.statuses.map((s) => `<option value="${s}" ${c[field] === s ? "selected" : ""}>${STATUS_LABEL[s]}</option>`).join("") + `</select>`;
@@ -193,14 +210,16 @@ window.addEventListener("hashchange", () => { S.sel = 0; render(); $("#main").fo
 async function renderDue(main) {
   const [due] = await Promise.all([api("GET", "/api/due"), loadChapters()]);
   const nC = due.chapters.length, nR = due.retests.length;
+  const nS = due.chapters.reduce((a, c) => a + c.due_count, 0);
+  const subsOverdue = due.chapters.reduce((a, c) => a + c.due_subtopics.filter((x) => x.overdue_days > 0).length, 0);
   let html = `<div class="page-head"><h1>Due today</h1><span class="muted">${fmtDate(S.boot.today, false)}</span><div class="spacer"></div>
-    <span class="muted small">Sorted by priority · <kbd>j</kbd>/<kbd>k</kbd> move · <kbd>r</kbd> reviewed today · <kbd>l</kbd> learnt today · <kbd>Enter</kbd> details</span></div>`;
+    <span class="muted small">Sorted by priority · <kbd>j</kbd>/<kbd>k</kbd> move · <kbd>r</kbd> review · <kbd>l</kbd> learnt · <kbd>Enter</kbd> details</span></div>`;
   html += `<div class="grid cols-3">
-    <div class="card stat"><div class="label">Chapters due</div><div class="big">${nC}</div><div class="sub">${due.chapters.filter((c) => c.days_until_review !== null && c.days_until_review < 0).length} overdue · ${due.chapters.filter((c) => !c.last_reviewed).length} first reviews</div></div>
+    <div class="card stat"><div class="label">Subtopics due</div><div class="big">${nS}</div><div class="sub">in ${plural(nC, "chapter")} · ${subsOverdue} overdue</div></div>
     <div class="card stat"><div class="label">Mistake retests due</div><div class="big">${nR}</div><div class="sub">from your mistakes log</div></div>
     <div class="card stat"><div class="label">Coming up (7 days)</div><div class="big">${due.upcoming.length}</div><div class="sub">${due.upcoming[0] ? esc(due.upcoming[0].title) + " " + relDays(due.upcoming[0].days_until_review) : "nothing scheduled"}</div></div></div>`;
 
-  html += `<div class="section" id="review-section"><h2>Chapters to review</h2>`;
+  html += `<div class="section" id="review-section"><h2>Subtopics to review</h2>`;
   html += nC ? dueCards(due.chapters, true) : `<div class="empty">🎉 Nothing due for review. ${S.chapters.some((c) => c.learnt) ? "Nice work." : "Mark chapters as learnt and their reviews will be scheduled from that day."}</div>`;
   html += `</div>`;
   if (nR) {
@@ -215,11 +234,11 @@ async function renderDue(main) {
   }
   if (due.upcoming.length) {
     html += `<div class="section"><h2>Coming up this week</h2><div class="table-wrap"><table class="compact"><tbody>` +
-      due.upcoming.map((c) => `<tr><td class="title-cell"><a data-action="open" data-id="${c.id}">${esc(c.title)}</a></td><td>${esc(c.strand)}</td><td>${confBadge(c.confidence)}</td><td>${fmtDate(c.next_review, false)} (${relDays(c.days_until_review)})</td></tr>`).join("") +
+      due.upcoming.map((c) => `<tr><td class="title-cell"><a data-action="open" data-id="${c.id}">${esc(c.title)}</a></td><td>${esc(c.strand)}</td><td>${confBadge(c.confidence)}</td><td>${fmtDate(c.next_review)} (${relDays(c.days_until_review)})</td></tr>`).join("") +
       `</tbody></table></div></div>`;
   }
   if (due.next_to_learn.length) {
-    html += `<div class="section" id="learn-section"><h2>Next to learn</h2><p class="small muted" style="margin:-4px 0 8px">The first chapter you haven't learnt yet in each book. Press <b>Learnt today</b> when you've learnt it (<kbd>l</kbd>).</p>${dueCards(due.next_to_learn, false)}</div>`;
+    html += `<div class="section" id="learn-section"><h2>Next to learn</h2><p class="small muted" style="margin:-4px 0 8px">The first chapter you haven't learnt yet in each book. Press <b>Learnt</b> when you've learnt it (<kbd>l</kbd>).</p>${dueCards(due.next_to_learn, false)}</div>`;
   }
   main.innerHTML = html;
 }
@@ -229,24 +248,26 @@ function dueCards(list, isDue) {
       <div class="due-item" data-row data-id="${c.id}">
         <div><div class="t" data-action="open" data-id="${c.id}">${esc(c.title)}</div>
           <div class="meta">${isDue ? dueReason(c) : learntPill(c)} <span>${esc(c.strand)} · ${esc(c.book)} ch ${c.ch_num}</span>
+          ${isDue ? `<span>${c.due_count} of ${plural(c.subtopic_count, "subtopic")} due</span>` : `<span>${plural(c.subtopic_count, "subtopic")}</span>`}
           ${c.learnt ? `<span>Confidence ${confBadge(c.confidence)}</span>` : ""}
-          ${c.last_reviewed ? `<span>Last reviewed ${relDays(-c.days_since)}</span>` : c.learnt ? `<span>Learnt ${relDays(-c.days_since_learnt)}</span>` : ""}
-          ${c.marks_lost ? `<span class="pill bad">−${c.marks_lost} marks in papers${c.top_error ? " · " + esc(c.top_error) : ""}</span>` : ""}</div></div>
+          ${c.marks_lost ? `<span class="pill bad">−${c.marks_lost} marks in papers${c.top_error ? " · " + esc(c.top_error) : ""}</span>` : ""}</div>
+          ${isDue ? `<ul class="sub-due">${c.due_subtopics.map((x) => `<li><a href="#" data-action="review-sub" data-id="${c.id}" data-sub="${esc(x.id)}" title="Review just this subtopic"><span class="muted num">${c.ch_num}.${x.num}</span> ${esc(x.title)}</a>${aOnly(x)}
+            ${dueReason(x)} ${x.confidence ? confBadge(x.confidence) : ""} <span class="small muted">${x.last_reviewed ? `last reviewed ${fmtDate(x.last_reviewed)}` : "not reviewed yet"}</span></li>`).join("")}</ul>` : ""}</div>
         <div class="actions">${isDue ? prioBadge(c.priority) : ""}${actionButton(c, true)}</div>
       </div>`).join("") + `</div>`;
 }
 
 function actionButton(c, big) {
   return c.learnt
-    ? `<button class="${big ? "primary" : "small"}" data-action="review" data-id="${c.id}" title="Reviewed today (r)">✓ Reviewed${big ? " today" : ""}</button>`
-    : `<button class="${big ? "primary" : "small"}" data-action="learnt" data-id="${c.id}" title="Learnt today (l)">★ Learnt${big ? " today" : ""}</button>`;
+    ? `<button class="${big ? "primary" : "small"}" data-action="review" data-id="${c.id}" title="Log a review (r)">✓ Review</button>`
+    : `<button class="${big ? "primary" : "small"}" data-action="learnt" data-id="${c.id}" title="Mark as learnt (l)">★ Learnt</button>`;
 }
 
 // ------------------------------------------------------------------ Chapters
 
 const CH_COLS = [
   ["strand", "Strand"], ["book", "Book"], ["ch_num", "Ch"], ["title", "Chapter"], ["level", "Level"], ["first_learnt", "First learnt"],
-  ["summary_status", "Summary"], ["exercises_status", "Exercises"], ["examq_status", "Exam Qs"], ["confidence", "Conf"],
+  ["summary_status", "Summary"], ["exercises_status", "Exercises"], ["examq_status", "Exam Qs"], ["confidence", "Avg conf"],
   ["last_reviewed", "Last review"], ["days_since", "Days since"], ["next_review", "Next review"], ["marks_lost", "Marks lost"], ["priority", "Priority"],
 ];
 const STATUS_FILTERS = {
@@ -259,7 +280,7 @@ function filteredChapters() {
   let list = S.chapters.filter((c) => {
     if (f.strand && c.strand !== f.strand) return false;
     if (f.book && c.book !== f.book) return false;
-    if (q && !(`${c.title} ${c.sections} ${c.book} ${c.strand} ${c.notes}`.toLowerCase().includes(q))) return false;
+    if (q && !(`${c.title} ${c.book} ${c.strand} ${c.notes}`.toLowerCase().includes(q) || subMatches(c).length)) return false;
     const st = [c.summary_status, c.exercises_status, c.examq_status];
     switch (f.status) {
       case "due": return c.due;
@@ -286,19 +307,26 @@ function filteredChapters() {
   return list;
 }
 
+// Subtopics whose title matches the search box.
+function subMatches(c) {
+  const q = S.filters.q.trim().toLowerCase();
+  return q ? c.subtopics.filter((x) => x.title.toLowerCase().includes(q)) : [];
+}
+
 async function renderChapters(main) {
   await loadChapters();
   const uniq = (k) => [...new Set(S.chapters.map((c) => c[k]))];
   const opt = (vals, cur, all) => `<option value="">${all}</option>` + vals.map((v) => `<option ${v === cur ? "selected" : ""}>${esc(v)}</option>`).join("");
   const f = S.filters;
   main.innerHTML = `<div class="page-head"><h1>Chapters</h1><span class="muted" id="ch-count"></span><div class="spacer"></div>
-      <span class="muted small"><kbd>/</kbd> search · <kbd>j</kbd>/<kbd>k</kbd> move · <kbd>l</kbd> learnt today · <kbd>r</kbd> reviewed today · <kbd>Enter</kbd> history</span></div>
+      <span class="muted small"><kbd>/</kbd> search · <kbd>j</kbd>/<kbd>k</kbd> move · <kbd>l</kbd> learnt · <kbd>r</kbd> review · <kbd>Enter</kbd> details</span></div>
     <div class="filters">
-      <input type="search" id="ch-search" placeholder="Search chapters, sections, notes…" value="${esc(f.q)}" aria-label="Search">
+      <input type="search" id="ch-search" placeholder="Search chapters, subtopics, notes…" value="${esc(f.q)}" aria-label="Search">
       <select data-filter="strand" aria-label="Strand">${opt(uniq("strand"), f.strand, "All strands")}</select>
       <select data-filter="book" aria-label="Book">${opt(uniq("book"), f.book, "All books")}</select>
       <select data-filter="status" aria-label="Status">${Object.entries(STATUS_FILTERS).map(([k, v]) => `<option value="${k}" ${k === f.status ? "selected" : ""}>${v}</option>`).join("")}</select>
       <button class="ghost small" data-action="clear-filters">Clear filters</button>
+      <button class="ghost small" data-action="expand-all" id="expand-all"></button>
     </div>
     <div class="table-wrap"><table id="ch-table"><thead></thead><tbody></tbody></table></div>`;
   drawChapterTable();
@@ -308,18 +336,39 @@ function drawChapterTable() {
   const list = filteredChapters();
   $("#ch-count").textContent = `${list.length} of ${S.chapters.length}`;
   $("#ch-table thead").innerHTML = `<tr>${CH_COLS.map(([k, label]) => `<th class="sortable" data-sort="${k}">${label}${S.sort.key === k ? ` <span class="arrow">${S.sort.dir > 0 ? "▲" : "▼"}</span>` : ""}</th>`).join("")}<th></th></tr>`;
-  $("#ch-table tbody").innerHTML = list.map((c) => `<tr data-row data-id="${c.id}">
+  const nextCell = (x) => (x.next_review ? (x.due ? `<span class="pill ${x.overdue_days > 0 ? "bad" : "warn"}">${fmtDate(x.next_review)}</span>` : fmtDate(x.next_review))
+    : x.due ? `<span class="pill warn">now</span>` : "—");
+  const allOpen = list.length && list.every((c) => S.expanded.has(c.id));
+  $("#expand-all").textContent = allOpen ? "▾ Hide subtopics" : "▸ Show all subtopics";
+  $("#expand-all").dataset.open = allOpen ? "1" : "";
+  $("#ch-table tbody").innerHTML = list.map((c) => {
+    const matches = new Set(subMatches(c).map((x) => x.id));
+    const open = S.expanded.has(c.id) || matches.size > 0;
+    const row = `<tr data-row data-id="${c.id}" class="ch-row${open ? " open" : ""}">
     <td>${esc(c.strand)}</td><td class="small">${esc(c.book)}</td><td class="num">${c.ch_num}</td>
-    <td class="title-cell"><a data-action="open" data-id="${c.id}">${esc(c.title)}</a>${c.question_count ? ` <span class="pill small" title="Questions in the question bank">📄 ${c.question_count}</span>` : ""}</td>
-    <td>${esc(c.level)}</td><td class="small nowrap"><input type="date" class="date-cell" data-change="first-learnt" data-id="${c.id}" value="${c.first_learnt || ""}" max="${S.boot.today}" aria-label="First learnt"></td>
+    <td class="title-cell"><button type="button" class="ghost twisty" data-action="toggle-subs" data-id="${c.id}" aria-expanded="${open}" title="${open ? "Hide" : "Show"} subtopics">${open ? "▾" : "▸"}</button><a data-action="open" data-id="${c.id}">${esc(c.title)}</a>
+      <span class="pill small" title="Subtopics due / subtopics">${c.due ? `${c.due_count}/${c.subtopic_count} due` : `${c.subtopic_count} subtopics`}</span>${c.question_count ? ` <span class="pill small" title="Questions in the question bank">📄 ${c.question_count}</span>` : ""}</td>
+    <td>${esc(c.level)}</td><td class="small nowrap">${dateField(c.first_learnt, `class="date-cell" data-change="first-learnt" data-id="${c.id}" aria-label="First learnt"`)}</td>
     <td>${statusSelect(c, "summary_status")}</td><td>${statusSelect(c, "exercises_status")}</td><td>${statusSelect(c, "examq_status")}</td>
-    <td><select data-change="confidence" data-id="${c.id}" aria-label="Confidence"><option value="">–</option>${[1, 2, 3, 4, 5].map((n) => `<option ${c.confidence === n ? "selected" : ""}>${n}</option>`).join("")}</select></td>
+    <td>${confBadge(c.confidence)}</td>
     <td class="small">${c.last_reviewed ? fmtDate(c.last_reviewed) : "—"}</td>
     <td class="num">${c.days_since ?? "—"}</td>
-    <td class="small">${c.next_review ? (c.due ? `<span class="pill ${c.days_until_review < 0 ? "bad" : "warn"}">${fmtDate(c.next_review, false)}</span>` : fmtDate(c.next_review, false)) : c.due ? `<span class="pill warn">now</span>` : "—"}</td>
+    <td class="small">${nextCell(c)}</td>
     <td class="num">${c.marks_lost || "—"}</td>
     <td>${prioBadge(c.priority)}</td>
-    <td>${actionButton(c, false)}</td></tr>`).join("") ||
+    <td>${actionButton(c, false)}</td></tr>`;
+    if (!open) return row;
+    return row + c.subtopics.map((x) => `<tr data-row data-id="${c.id}" data-sub="${esc(x.id)}" class="sub-row${matches.has(x.id) ? " match" : ""}">
+    <td></td><td></td><td class="num small muted">${c.ch_num}.${x.num}</td>
+    <td class="sub-title">${esc(x.title)}${aOnly(x)}</td>
+    <td colspan="5"></td>
+    <td>${confBadge(x.confidence)}</td>
+    <td class="small">${x.last_reviewed ? fmtDate(x.last_reviewed) : "—"}</td>
+    <td class="num">${x.days_since ?? "—"}</td>
+    <td class="small">${nextCell(x)}</td>
+    <td></td><td>${c.learnt ? prioBadge(x.priority) : ""}</td>
+    <td>${c.learnt ? `<button class="small" data-action="review-sub" data-id="${c.id}" data-sub="${esc(x.id)}" title="Review this subtopic (r)">✓ Review</button>` : ""}</td></tr>`).join("");
+  }).join("") ||
     `<tr><td colspan="${CH_COLS.length + 1}" class="muted" style="text-align:center;padding:24px">No chapters match these filters.</td></tr>`;
   highlightSelection(false);
 }
@@ -329,31 +378,66 @@ function drawChapterTable() {
 async function openChapter(id) {
   const h = await api("GET", `/api/chapters/${id}/history`);
   const c = h.chapter;
+  const prevScroll = S.drawerId === id ? $(".drawer")?.scrollTop || 0 : 0;
+  const openSubs = new Set($$(".drawer details.sub[open]").map((d) => d.dataset.sub));
+  // reviews logged together (one session) show as one entry in the history
+  const sessions = [];
+  for (const r of h.reviews) {
+    const last = sessions[sessions.length - 1];
+    if (last && last.date === r.reviewed_on && last.created_at === r.created_at) last.reviews.push(r);
+    else sessions.push({ date: r.reviewed_on, created_at: r.created_at, reviews: [r] });
+  }
   const events = [
     ...(c.first_learnt ? [{ date: c.first_learnt, kind: "l", html: `<b>First learnt</b> ★` }] : []),
-    ...h.reviews.map((r) => ({ date: r.reviewed_on, kind: "r", html: `<b>Reviewed</b> — confidence ${r.confidence_before ?? "–"} → <b>${r.confidence_after}</b>${r.note ? `<div>${esc(r.note)}</div>` : ""} <button class="ghost small danger" data-action="del-review" data-id="${r.id}" title="Delete this review">Undo</button>` })),
+    ...sessions.map((ss) => ({ date: ss.date, kind: "r", html: `<b>Reviewed ${ss.reviews.length === c.subtopic_count ? "every subtopic" : plural(ss.reviews.length, "subtopic")}</b>
+      <button class="ghost small danger" data-action="del-review" data-ids="${esc(ss.reviews.map((r) => r.id).join(","))}" title="Delete this review">Undo</button>
+      <ul class="small">${ss.reviews.map((r) => `<li>${esc(r.subtopic_title)}: ${r.confidence_before ?? "–"} → <b>${r.confidence_after}</b></li>`).join("")}</ul>${ss.reviews[0].note ? `<div>${esc(ss.reviews[0].note)}</div>` : ""}` })),
     ...h.questions.map((q) => ({ date: q.sat_on, kind: "q", html: `<b>Lost ${q.marks_lost} mark${q.marks_lost === 1 ? "" : "s"}</b> on ${esc(q.paper_code)} ${esc(q.series)} Q${esc(q.q_num)} <span class="pill">${esc(q.error_type)}</span>${q.fix ? `<div class="small">Fix: ${esc(q.fix)}</div>` : ""}` })),
     ...h.mistakes.map((m) => ({ date: m.logged_on, kind: "m", html: `<b>Mistake logged</b>: ${esc(m.what_wrong)} ${m.retest_passed ? `<span class="pill good">✓ retest passed ${fmtDate(m.passed_on)}</span>` : m.retest_on ? `<span class="pill">retest ${fmtDate(m.retest_on)}</span>` : ""}` })),
   ].sort((a, b) => (a.date < b.date ? 1 : -1));
   const parts = c.priority_parts;
-  $("#drawer-root").innerHTML = `<div class="backdrop" data-action="close-drawer"></div>
-    <aside class="drawer" tabindex="-1" role="dialog" aria-label="${esc(c.title)}">
+  const subReviews = (x) => h.reviews.filter((r) => r.subtopic_id === x.id);
+  const subRow = (x) => {
+    const rv = subReviews(x);
+    return `<details class="sub" data-sub="${esc(x.id)}"${openSubs.has(x.id) ? " open" : ""}>
+      <summary><span class="muted num">${c.ch_num}.${x.num}</span><span class="sub-name">${esc(x.title)}${aOnly(x)}</span>
+        ${confBadge(x.confidence)}
+        <span>${c.learnt ? `<button class="small" data-action="review-sub" data-id="${c.id}" data-sub="${esc(x.id)}">✓ Review</button>` : ""}</span>
+        <span class="sub-meta small muted">${x.last_reviewed ? `Last reviewed ${fmtDate(x.last_reviewed)} · ${plural(x.review_count, "review")}` : "Not reviewed yet"}
+          ${x.due ? ` · ${dueReason(x)}` : x.next_review ? ` · next ${fmtDate(x.next_review)}` : ""}</span></summary>
+      ${rv.length ? `<table class="compact reviews"><thead><tr><th>Reviewed on</th><th>Confidence</th><th>Note</th><th></th></tr></thead><tbody>${rv.map((r) => `
+        <tr><td>${dateField(r.reviewed_on, `data-change="review-date" data-id="${esc(r.id)}" aria-label="Review date"`)}</td>
+          <td>${r.confidence_before ?? "–"} → <b>${r.confidence_after}</b></td><td class="small">${esc(r.note)}</td>
+          <td><button class="ghost small danger" data-action="del-review" data-ids="${esc(r.id)}" title="Delete this review">Undo</button></td></tr>`).join("")}</tbody></table>`
+        : `<div class="small muted" style="padding:6px 0 8px">No reviews yet.${c.learnt ? ` Scheduled from the day you learnt the chapter (${fmtDate(c.first_learnt)}).` : ""}</div>`}
+    </details>`;
+  };
+  const editRow = (x) => `<div class="sub-edit"><span class="muted num">${c.ch_num}.${x.num}</span>
+      <input data-change="rename-sub" data-id="${esc(x.id)}" value="${esc(x.title)}" aria-label="Subtopic name">
+      <button class="ghost small danger" data-action="del-sub" data-id="${esc(x.id)}" data-reviews="${x.review_count}" ${c.subtopic_count === 1 ? "disabled" : ""}>Delete</button></div>`;
+  $("#drawer-root").innerHTML = `<div class="backdrop${S.drawerId === id ? " no-anim" : ""}" data-action="close-drawer"></div>
+    <aside class="drawer${S.drawerId === id ? " no-anim" : ""}" tabindex="-1" role="dialog" aria-label="${esc(c.title)}">
       <button class="ghost close-x" data-action="close-drawer" aria-label="Close">✕</button>
       <div class="muted small">${esc(c.strand)} · ${esc(c.book)} · Chapter ${c.ch_num} · ${esc(c.level)}</div>
       <h1 style="margin:4px 0 10px">${esc(c.title)}</h1>
       <div class="chip-row" style="margin-bottom:12px">${learntPill(c)}${c.due ? dueReason(c) : ""}</div>
-      <p class="small muted" style="margin-top:0">${esc(c.sections)}</p>
       ${actionButton(c, true)}
       <div class="card section">
         <dl class="kv">
-          <dt>First learnt</dt><dd><input type="date" data-change="first-learnt" data-id="${c.id}" value="${c.first_learnt || ""}" max="${S.boot.today}" aria-label="First learnt date"> <span class="small muted">${c.learnt ? relDays(-c.days_since_learnt) : "pick a past date if you learnt it before using this site"}</span></dd>
-          <dt>Confidence</dt><dd>${confBadge(c.confidence)} ${c.confidence ? CONF_LABEL[c.confidence] : "Not rated yet"}</dd>
+          <dt>First learnt</dt><dd>${dateField(c.first_learnt, `data-change="first-learnt" data-id="${c.id}" aria-label="First learnt date"`)} <span class="small muted">${c.learnt ? relDays(-c.days_since_learnt) : "pick a past date if you learnt it before using this site"}</span></dd>
+          <dt>Confidence</dt><dd>${confBadge(c.confidence)} ${c.confidence ? `average of ${plural(c.subtopics.filter((x) => x.confidence).length, "subtopic")} · lowest ${c.min_confidence}` : "Not rated yet"}</dd>
           <dt>Last reviewed</dt><dd>${c.last_reviewed ? `${fmtDate(c.last_reviewed)} (${c.days_since === 0 ? "today" : plural(c.days_since, "day") + " ago"})` : "Never"}</dd>
-          <dt>Next review</dt><dd>${c.next_review ? `${fmtDate(c.next_review)} (${relDays(c.days_until_review)})` : c.learnt ? "Rate your confidence to schedule it" : "Scheduled once you've learnt it"}</dd>
-          <dt>Reviews logged</dt><dd>${c.review_count}</dd>
+          <dt>Next review</dt><dd>${c.due ? `${c.due_count} of ${plural(c.subtopic_count, "subtopic")} due now` : c.next_review ? `${fmtDate(c.next_review)} (${relDays(c.days_until_review)})` : "Scheduled once you've learnt it"}</dd>
+          <dt>Reviews logged</dt><dd>${c.review_count} <span class="small muted">(one per subtopic reviewed)</span></dd>
           <dt>Marks lost in papers</dt><dd>${c.marks_lost}${c.top_error ? ` · most common error: <b>${esc(c.top_error)}</b>` : ""}</dd>
-          <dt>Priority</dt><dd>${prioBadge(c.priority)} <span class="small muted">confidence ${parts.confidence} · overdue ${parts.overdue} · marks ${parts.marks} · learnt ${parts.learnt}</span></dd>
+          <dt>Priority</dt><dd>${prioBadge(c.priority)} <span class="small muted">most urgent subtopic · confidence ${parts.confidence} · overdue ${parts.overdue} · marks ${parts.marks} · learnt ${parts.learnt}</span></dd>
         </dl>
+      </div>
+      <div class="section" id="subtopics"><div class="page-head" style="margin-bottom:8px"><h2 style="margin:0">Subtopics</h2><span class="muted small">${plural(c.subtopic_count, "subtopic")} · each has its own reviews</span><div class="spacer"></div>
+        <button class="ghost small" data-action="edit-subs">${S.editSubs ? "Done" : "Edit list"}</button></div>
+        ${S.editSubs ? `<div class="card">${c.subtopics.map(editRow).join("")}
+          <form id="add-sub-form" class="form-row" style="margin-top:8px"><input name="title" placeholder="New subtopic" required style="flex:1"><button class="small" type="submit">+ Add subtopic</button></form></div>`
+          : `<div class="sub-list">${c.subtopics.map(subRow).join("")}</div>`}
       </div>
       <div class="card section">
         <div class="form-row">
@@ -368,69 +452,136 @@ async function openChapter(id) {
         <div id="drawer-questions">${bankGrid(svc.listBank(S.tracker.doc).filter((q) => q.chapter_id === c.id), "No questions yet. Add photos or PDFs of questions you've done on this chapter.")}</div>
       </div>
       <div class="section"><h2>History</h2>
-        ${events.length ? `<ul class="timeline">${events.map((e) => `<li class="${e.kind}"><div class="when">${fmtDate(e.date, false)} ${fmtDate(e.date).slice(-4)}</div>${e.html}</li>`).join("")}</ul>` : `<div class="empty">Nothing yet. Press <b>Learnt today</b> when you first learn this chapter.</div>`}
+        ${events.length ? `<ul class="timeline">${events.map((e) => `<li class="${e.kind}"><div class="when">${fmtDate(e.date)}</div>${e.html}</li>`).join("")}</ul>` : `<div class="empty">Nothing yet. Press <b>Learnt</b> when you first learn this chapter.</div>`}
       </div>
     </aside>`;
+  const again = S.drawerId === id;
   S.drawerId = id;
   hydrateThumbs($(".drawer"));
-  $(".drawer").focus();
+  $("#add-sub-form")?.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const title = new FormData(e.target).get("title");
+    await guard(() => api("POST", `/api/chapters/${id}/subtopics`, { title }));
+    toast("Subtopic added"); await softRefresh(id);
+    $("#add-sub-form [name=title]")?.focus();
+  });
+  $(".drawer").scrollTop = prevScroll;
+  if (!again) $(".drawer").focus();
 }
-function closeDrawer() { $("#drawer-root").innerHTML = ""; S.drawerId = null; }
+function closeDrawer() { $("#drawer-root").innerHTML = ""; S.drawerId = null; S.editSubs = false; }
 
 // ------------------------------------------------------------------ review modal
 
-// mode "review" (Reviewed today) or "learnt" (Learnt today): both stamp today's date and
-// ask for a confidence rating, which sets when the next review is due.
-function openReview(id, mode = "review") {
+// mode "review" or "learnt". Reviewing: tick the subtopics you went over and rate each one;
+// each gets its own next review. Learnt: rate every subtopic, which schedules their first
+// reviews. Both are dated today unless you change the date (dd/mm/yyyy).
+function openReview(id, mode = "review", { only = null } = {}) {
   const c = chapterById(id); if (!c) return;
   if (mode === "learnt" && c.learnt) mode = "review";
+  if (mode === "review" && !c.learnt && only) mode = "learnt";
   const learning = mode === "learnt";
-  let chosen = learning ? null : c.confidence || null;
   const iv = S.boot.settings.intervals;
+  // which subtopics start ticked: the one(s) asked for, else the due ones, else all of them
+  const dueIds = c.subtopics.filter((x) => x.due).map((x) => x.id);
+  const ticked = new Set(learning ? c.subtopics.map((x) => x.id) : only || (dueIds.length ? dueIds : c.subtopics.map((x) => x.id)));
+  const rating = {};
+  const yesterday = addDays(S.boot.today, -1);
   $("#modal-root").innerHTML = `<div class="backdrop modal-backdrop" data-action="close-modal"></div>
-    <div class="modal" role="dialog" aria-label="${learning ? "Learnt today" : "Log review"}">
+    <div class="modal wide" role="dialog" aria-label="${learning ? "Learnt" : "Log review"}">
       <button class="ghost close-x" data-action="close-modal" aria-label="Close">✕</button>
-      <div class="muted small">${learning ? "★ Learnt today" : "Reviewed today"} · ${fmtDate(S.boot.today)}</div>
-      <h2 style="margin:4px 0 2px">${esc(c.title)}</h2>
-      <div class="muted small">How confident are you ${learning ? "with it" : "now"}? Press <kbd>1</kbd>–<kbd>5</kbd>, then <kbd>Enter</kbd>.</div>
-      <div class="conf-picker">${[1, 2, 3, 4, 5].map((n) => `<button data-conf="${n}"><b>${n}</b><span>${CONF_LABEL[n]}</span></button>`).join("")}</div>
-      ${learning ? `<label class="field" style="margin-top:6px">Learnt on<input type="date" id="learnt-on" value="${S.boot.today}" max="${S.boot.today}"></label>` : ""}
-      <div class="small muted" id="next-preview">&nbsp;</div>
+      <div class="muted small">${learning ? "★ Learnt" : "✓ Log a review"} · ${esc(c.book)} ch ${c.ch_num}</div>
+      <h2 style="margin:4px 0 8px">${esc(c.title)}</h2>
+      <div class="form-row" style="align-items:flex-end">
+        <label class="field">${learning ? "Learnt on" : "Reviewed on"}${dateField(S.boot.today, `id="review-on" aria-label="${learning ? "Learnt on" : "Reviewed on"} (dd/mm/yyyy)"`)}</label>
+        <div class="chip-row" style="padding-bottom:4px"><button type="button" class="small" data-set-date="${S.boot.today}">Today</button><button type="button" class="small" data-set-date="${yesterday}">Yesterday</button></div>
+      </div>
+      <div class="small muted" style="margin:8px 0 4px">${learning ? "How confident are you with each subtopic?" : "Tick what you reviewed and rate how confident you are now."} <kbd>1</kbd>–<kbd>5</kbd> rates every ticked subtopic, then <kbd>Enter</kbd>.</div>
+      <div class="table-wrap"><table class="compact sub-rate">
+        <thead><tr>${learning ? "" : `<th><input type="checkbox" id="tick-all" aria-label="Tick all" title="Tick all"></th>`}<th>Subtopic</th>${learning ? "" : "<th>Now</th>"}
+          <th><div class="rate all" role="group" aria-label="Rate all ticked">${[1, 2, 3, 4, 5].map((n) => `<button type="button" data-all="${n}" title="Rate every ticked subtopic ${n} (${CONF_LABEL[n]})">${n}</button>`).join("")}</div></th><th>Next review</th></tr></thead>
+        <tbody>${c.subtopics.map((x) => `<tr data-sub="${esc(x.id)}">
+          ${learning ? "" : `<td><input type="checkbox" class="tick" ${ticked.has(x.id) ? "checked" : ""} aria-label="Reviewed ${esc(x.title)}"></td>`}
+          <td><span class="muted num small">${c.ch_num}.${x.num}</span> ${esc(x.title)}${aOnly(x)}${x.due && !learning ? ` <span class="pill warn small">due</span>` : ""}</td>
+          ${learning ? "" : `<td>${confBadge(x.confidence)}</td>`}
+          <td><div class="rate" role="group" aria-label="Confidence for ${esc(x.title)}">${[1, 2, 3, 4, 5].map((n) => `<button type="button" data-conf="${n}" title="${CONF_LABEL[n]}">${n}</button>`).join("")}</div></td>
+          <td class="small next"></td></tr>`).join("")}</tbody></table></div>
+      <div class="small muted conf-key">${[1, 2, 3, 4, 5].map((n) => `<b>${n}</b> ${CONF_LABEL[n]}`).join(" · ")}</div>
       ${learning ? "" : `<label class="field" style="margin-top:10px">Note (optional)<textarea id="review-note" placeholder="What did you do? e.g. Ex 4B + 5 exam Qs"></textarea></label>`}
+      <div class="small bad-text" id="review-error" role="alert"></div>
       <div class="form-row" style="justify-content:flex-end;margin-top:12px"><button data-action="close-modal">Cancel</button><button class="primary" id="review-save" disabled>${learning ? "Mark as learnt" : "Log review"}</button></div>
     </div>`;
-  const pick = (n) => {
-    chosen = n;
-    $$(".conf-picker button").forEach((b) => b.classList.toggle("chosen", +b.dataset.conf === n));
-    $("#review-save").disabled = false;
-    const from = (learning && $("#learnt-on").value) || S.boot.today;
-    const next = addDays(from, iv[n]);
-    const late = L.daysBetween(next, S.boot.today);
-    const when = from === S.boot.today ? `in ${plural(iv[n], "day")}` : `${plural(iv[n], "day")} after ${fmtDate(from, false)}`;
-    $("#next-preview").textContent = `${learning ? "First review" : "Next review"} ${when}: ${fmtDate(next, false)}${late > 0 ? " (already due)" : ""}`;
+  const modal = $("#modal-root .modal");
+  const rowsEl = $$("tbody tr[data-sub]", modal);
+  const isTicked = (sid) => learning || ticked.has(sid);
+  const dateISO = () => { try { return L.parseDMY($("#review-on").value); } catch { return undefined; } };
+  const update = () => {
+    const on = dateISO();
+    let problem = "";
+    if (on === undefined || on === null) problem = "Type the date as dd/mm/yyyy";
+    else if (on > S.boot.today) problem = "The date can't be in the future";
+    else if (!learning && c.first_learnt && on < c.first_learnt) problem = `That's before you first learnt this chapter (${fmtDate(c.first_learnt)})`;
+    for (const tr of rowsEl) {
+      const sid = tr.dataset.sub, n = rating[sid], on2 = isTicked(sid);
+      tr.classList.toggle("off", !on2);
+      $$(".rate button", tr).forEach((b) => b.classList.toggle("chosen", on2 && +b.dataset.conf === n));
+      $(".next", tr).textContent = on2 && n && on && !problem ? fmtDate(addDays(on, iv[n])) : "";
+    }
+    const chosen = c.subtopics.filter((x) => isTicked(x.id));
+    const unrated = chosen.filter((x) => !rating[x.id]).length;
+    if (!problem && !chosen.length) problem = "Tick at least one subtopic";
+    const tickAll = $("#tick-all");
+    if (tickAll) { tickAll.checked = chosen.length === c.subtopics.length; tickAll.indeterminate = chosen.length > 0 && chosen.length < c.subtopics.length; }
+    $("#review-error").textContent = problem;
+    const btn = $("#review-save");
+    btn.disabled = Boolean(problem) || unrated > 0;
+    btn.textContent = learning ? "Mark as learnt" : `Log review${chosen.length ? ` (${plural(chosen.length, "subtopic")})` : ""}`;
+    btn.title = unrated ? `Rate ${plural(unrated, "more subtopic")}` : "";
   };
-  if (learning) $("#learnt-on").addEventListener("change", () => { if (chosen) pick(chosen); });
-  if (chosen) pick(chosen);
-  $$(".conf-picker button").forEach((b) => b.addEventListener("click", () => pick(+b.dataset.conf)));
+  const rateAll = (n) => { for (const x of c.subtopics) if (isTicked(x.id)) rating[x.id] = n; update(); };
+  modal.addEventListener("click", (e) => {
+    const b = e.target.closest("button"); if (!b) return;
+    if (b.dataset.all) return rateAll(+b.dataset.all);
+    if (b.dataset.setDate) { $("#review-on").value = L.formatDMY(b.dataset.setDate); return update(); }
+    if (b.dataset.conf) {
+      const sid = b.closest("tr").dataset.sub;
+      rating[sid] = +b.dataset.conf;
+      if (!learning) ticked.add(sid); // rating a subtopic ticks it
+      $(".tick", b.closest("tr")) && ($(".tick", b.closest("tr")).checked = true);
+      update();
+    }
+  });
+  modal.addEventListener("change", (e) => {
+    if (e.target.classList.contains("tick")) { const sid = e.target.closest("tr").dataset.sub; e.target.checked ? ticked.add(sid) : ticked.delete(sid); update(); }
+    if (e.target.id === "tick-all") { for (const x of c.subtopics) e.target.checked ? ticked.add(x.id) : ticked.delete(x.id); $$(".tick", modal).forEach((t) => { t.checked = e.target.checked; }); update(); }
+    if (e.target.id === "review-on") update();
+  });
+  $("#review-on").addEventListener("input", update);
   const save = async () => {
-    if (!chosen) return;
+    if ($("#review-save").disabled) return;
     $("#review-save").disabled = true;
+    const ratings = Object.fromEntries(c.subtopics.filter((x) => isTicked(x.id)).map((x) => [x.id, rating[x.id]]));
+    const on = dateISO();
     try {
-      if (learning) await api("POST", `/api/chapters/${id}/learnt`, { confidence: chosen, on: $("#learnt-on").value || S.boot.today });
-      else await api("POST", `/api/chapters/${id}/review`, { confidence: chosen, note: $("#review-note").value.trim() });
+      if (learning) await api("POST", `/api/chapters/${id}/learnt`, { confidence: ratings, on });
+      else await api("POST", `/api/chapters/${id}/review`, { ratings, note: $("#review-note").value.trim(), on });
       closeModal();
-      toast(learning ? "Marked as learnt" : `Logged review · next in ${plural(iv[chosen], "day")}`);
+      toast(learning ? "Marked as learnt" : `Logged review of ${plural(Object.keys(ratings).length, "subtopic")}${on !== S.boot.today ? ` on ${fmtDate(on)}` : ""}`);
       await afterChange(id);
-    } catch (e) { toast(e.message, "error"); $("#review-save").disabled = false; }
+    } catch (e) { toast(e.message, "error"); update(); }
   };
   $("#review-save").addEventListener("click", save);
   S.modalKeys = (e) => {
-    if (/^[1-5]$/.test(e.key) && !isTyping(e)) { pick(+e.key); e.preventDefault(); return true; }
-    if (e.key === "Enter" && e.target.closest("[data-action=close-modal]")) return false;
-    if (e.key === "Enter" && !(e.target.id === "review-note" && e.shiftKey) && !$("#review-save").disabled) { save(); e.preventDefault(); return true; }
+    if (/^[1-5]$/.test(e.key) && !isTyping(e)) { rateAll(+e.key); e.preventDefault(); return true; }
+    if (e.key === "Enter" && e.target.closest("[data-action=close-modal], [data-set-date], .cal")) return false;
+    if (e.key === "Enter" && !(e.target.id === "review-note" && e.shiftKey)) {
+      if (e.target.id === "review-on") update();
+      if (!$("#review-save").disabled) { save(); e.preventDefault(); return true; }
+    }
     return false;
   };
-  (chosen ? $("#review-save") : $(".conf-picker button")).focus();
+  update();
+  modal.tabIndex = -1;
+  modal.focus();
 }
 function closeModal() { $("#modal-root").innerHTML = ""; S.modalKeys = null; }
 
@@ -456,8 +607,8 @@ async function renderDashboard(main) {
     <div class="grid cols-4">
       <div class="card stat"><div class="label">Next exam</div>${next ? `<div class="big">${next.days}<span style="font-size:14px;font-weight:600"> days</span></div><div class="sub">${esc(next.name)} · ${fmtDate(next.date)}${next.confirmed ? "" : " (estimated)"}</div>` : `<div class="big">—</div><div class="sub">Add exam dates in Settings</div>`}</div>
       <div class="card stat"><div class="label">Learnt so far</div><div class="big">${pace.learnt}<span style="font-size:14px;font-weight:600"> / ${pace.total}</span></div><div class="sub">${paceLine(pace)}</div></div>
-      <div class="card stat"><div class="label">Review streak</div><div class="big">🔥 ${d.streak}</div><div class="sub">${plural(d.reviews_this_week, "review")} this week · ${d.reviews_total} total</div></div>
-      <div class="card stat"><div class="label">Overdue now</div><div class="big" style="color:var(${d.due_count ? "--bad" : "--text"})">${d.due_count}</div><div class="sub">chapters due · ${plural(d.open_retests, "open retest")}</div></div>
+      <div class="card stat"><div class="label">Review streak</div><div class="big">🔥 ${d.streak}</div><div class="sub">${plural(d.reviews_this_week, "subtopic review")} this week · ${d.reviews_total} total</div></div>
+      <div class="card stat"><div class="label">Due now</div><div class="big" style="color:var(${d.due_count ? "--bad" : "--text"})">${d.subtopics_due}</div><div class="sub">subtopics in ${plural(d.due_count, "chapter")} · ${plural(d.open_retests, "open retest")}</div></div>
     </div>
 
     <div class="grid cols-2 section">
@@ -482,6 +633,11 @@ async function renderDashboard(main) {
       <div class="card"><h2>Top 10 weakest chapters</h2>
         ${d.weakest.length ? `<table class="compact"><thead><tr><th>#</th><th>Chapter</th><th>Conf</th><th>Marks lost</th><th>Main error</th></tr></thead><tbody>${d.weakest.map((c, i) => `<tr><td class="num">${i + 1}</td><td class="title-cell"><a data-action="open" data-id="${c.id}">${esc(c.title)}</a><div class="small muted">${esc(c.strand)}</div></td><td>${confBadge(c.confidence)}</td><td class="num">${c.marks_lost || "—"}</td><td class="small">${esc(c.top_error || "—")}</td></tr>`).join("")}</tbody></table>`
           : `<div class="empty">Rate your confidence on some chapters (or log paper questions) and your weakest will show here.</div>`}</div>
+      <div class="card"><h2>Weakest subtopics</h2>
+        ${d.weakest_subtopics.length ? `<table class="compact"><thead><tr><th>Subtopic</th><th>Conf</th><th>Next review</th></tr></thead><tbody>${d.weakest_subtopics.map((x) => `<tr><td class="title-cell">${esc(x.title)}<div class="small muted"><a data-action="open" data-id="${x.chapter_id}">${esc(x.book)} ch ${x.ch_num}: ${esc(x.chapter_title)}</a></div></td><td>${confBadge(x.confidence)}</td><td class="small">${x.due ? `<span class="pill bad">due</span>` : fmtDate(x.next_review)}</td></tr>`).join("")}</tbody></table>`
+          : `<div class="empty">Subtopics you rate 1 or 2 will show here.</div>`}</div>
+    </div>
+    <div class="section">
       <div class="card"><h2>Past papers vs A*</h2>
         <table class="compact"><thead><tr><th>Paper</th><th>Attempts</th><th>Average</th><th>A* boundary</th><th>Gap</th></tr></thead><tbody>
         ${d.papers.map((p) => `<tr><td><b>${esc(p.code)}</b><div class="small muted">${esc(p.name)}</div></td><td class="num">${p.points.length}</td><td class="num">${p.average !== null ? p.average + "%" : "—"}</td><td class="num">${p.a_star_percent !== null ? p.a_star_percent + "%" : `<span class="muted small">not entered</span>`}</td>
@@ -1095,6 +1251,27 @@ document.addEventListener("click", async (e) => {
     case "open": if (el.closest(".viewer")) closeViewer(); return openChapter(id);
     case "review": return openReview(id);
     case "learnt": return openReview(id, "learnt");
+    case "review-sub": e.stopPropagation(); e.preventDefault(); return openReview(id, "review", { only: [el.dataset.sub] });
+    case "toggle-subs": S.expanded.has(id) ? S.expanded.delete(id) : S.expanded.add(id); return drawChapterTable();
+    case "expand-all": {
+      const list = filteredChapters();
+      if (el.dataset.open) list.forEach((c) => S.expanded.delete(c.id)); else list.forEach((c) => S.expanded.add(c.id));
+      return drawChapterTable();
+    }
+    case "edit-subs": S.editSubs = !S.editSubs; return openChapter(S.drawerId);
+    case "del-sub": {
+      const n = Number(el.dataset.reviews);
+      if (!confirm(n ? `Delete this subtopic and its ${plural(n, "review")}?` : "Delete this subtopic?")) return;
+      await guard(() => api("DELETE", `/api/subtopics/${id}`)); toast("Subtopic deleted"); return softRefresh(S.drawerId);
+    }
+    case "pick-date": {
+      const wrap = el.closest(".dmy"), nat = $(".cal-native", wrap), text = $("input[type=text]", wrap);
+      let iso = null;
+      try { iso = L.parseDMY(text.value); } catch { /* start from today */ }
+      nat.value = iso || S.boot.today;
+      try { nat.showPicker(); } catch { nat.focus(); }
+      return;
+    }
     case "open-question": return openQuestion(el.dataset.qid);
     case "add-question": return openUpload({ chapterId: el.dataset.chapter || S.qFilters.chapter || "" });
     case "add-files": return openUpload({ questionId: el.dataset.qid, role: el.dataset.role });
@@ -1123,9 +1300,11 @@ document.addEventListener("click", async (e) => {
     case "theme": return cycleTheme();
     case "help": return openHelp();
     case "clear-filters": S.filters = { q: "", strand: "", book: "", status: "" }; return render();
-    case "del-review":
-      if (!confirm("Delete this review from the history?")) return;
-      await guard(() => api("DELETE", `/api/reviews/${id}`)); toast("Review removed"); return afterChange(S.drawerId);
+    case "del-review": {
+      const ids = el.dataset.ids.split(",");
+      if (!confirm(ids.length > 1 ? `Delete this review of ${plural(ids.length, "subtopic")} from the history?` : "Delete this review from the history?")) return;
+      await guard(() => api("DELETE", "/api/reviews", { ids })); toast("Review removed"); return afterChange(S.drawerId);
+    }
     case "retest": {
       const passed = el.dataset.passed === "1";
       await guard(() => api("POST", `/api/mistakes/${id}/retest`, { passed }));
@@ -1174,16 +1353,33 @@ document.addEventListener("click", (e) => {
 
 document.addEventListener("change", async (e) => {
   const el = e.target;
+  if (el.classList.contains("cal-native")) {
+    // a date picked from the calendar goes into the dd/mm/yyyy box beside it
+    const text = $("input[type=text]", el.closest(".dmy"));
+    if (el.value && text) {
+      text.value = L.formatDMY(el.value);
+      text.dispatchEvent(new Event("input", { bubbles: true }));
+      text.dispatchEvent(new Event("change", { bubbles: true }));
+    }
+    return;
+  }
   if (el.dataset.filter) { S.filters[el.dataset.filter] = el.value; S.sel = 0; return drawChapterTable(); }
   const kind = el.dataset.change; if (!kind) return;
   const id = el.dataset.id;
   if (kind === "status") { await guard(() => api("PATCH", `/api/chapters/${id}`, { [el.dataset.field]: el.value })); el.className = `st-${el.value}`; return softRefresh(id); }
-  if (kind === "confidence") { await guard(() => api("PATCH", `/api/chapters/${id}`, { confidence: el.value ? Number(el.value) : null })); return softRefresh(id); }
   if (kind === "first-learnt") {
-    try { await api("PATCH", `/api/chapters/${id}`, { first_learnt: el.value || null }); toast(el.value ? `First learnt: ${fmtDate(el.value)}` : "Marked as not learnt"); }
-    catch (err) { toast(err.message, "error"); }
+    try {
+      const c = await api("PATCH", `/api/chapters/${id}`, { first_learnt: el.value.trim() || null });
+      toast(c.first_learnt ? `First learnt: ${fmtDate(c.first_learnt)}` : "Marked as not learnt");
+    } catch (err) { toast(err.message, "error"); }
     return softRefresh(id);
   }
+  if (kind === "review-date") {
+    try { await api("PATCH", `/api/reviews/${id}`, { reviewed_on: el.value }); toast("Review date changed"); }
+    catch (err) { toast(err.message, "error"); }
+    return softRefresh(S.drawerId);
+  }
+  if (kind === "rename-sub") { await guard(() => api("PATCH", `/api/subtopics/${id}`, { title: el.value })); toast("Renamed"); return loadChapters(); }
   if (kind === "bank-field") {
     await guard(() => api("PATCH", `/api/bank/${el.dataset.qid}`, { [el.dataset.field]: el.value }));
     if (el.tagName === "TEXTAREA" || el.tagName === "INPUT") { toast("Saved"); return; }
@@ -1223,7 +1419,7 @@ function highlightSelection(scroll = true) {
 function selectedId() { const r = rows()[S.sel]; return r && r.dataset.id ? r.dataset.id : null; }
 
 function openHelp() {
-  const keys = [["1 – 7", "Go to Due / Chapters / Dashboard / Papers / Mistakes / Questions / Settings"], ["j / k or ↓ / ↑", "Move selection"], ["l", "Learnt today (selected chapter)"], ["r", "Reviewed today (selected chapter)"], ["Enter or o", "Open chapter history"], ["1 – 5 then Enter", "Set confidence in the review dialog"], ["/", "Search chapters"], ["n", "New paper attempt / mistake / question (on those pages)"], ["t", "Toggle dark mode"], ["Esc", "Close dialog / panel"], ["?", "This help"]];
+  const keys = [["1 – 7", "Go to Due / Chapters / Dashboard / Papers / Mistakes / Questions / Settings"], ["j / k or ↓ / ↑", "Move selection"], ["l", "Learnt (selected chapter)"], ["r", "Log a review (selected chapter or subtopic)"], ["Enter or o", "Open chapter and its subtopics"], ["1 – 5 then Enter", "Rate every ticked subtopic in the review dialog"], ["/", "Search chapters"], ["n", "New paper attempt / mistake / question (on those pages)"], ["t", "Toggle dark mode"], ["Esc", "Close dialog / panel"], ["?", "This help"]];
   $("#modal-root").innerHTML = `<div class="backdrop modal-backdrop" data-action="close-modal"></div><div class="modal" role="dialog" aria-label="Keyboard shortcuts">
     <button class="ghost close-x" data-action="close-modal" aria-label="Close">✕</button><h2>Keyboard shortcuts</h2>
     <table class="compact shortcuts"><tbody>${keys.map(([k, v]) => `<tr><td><kbd>${k}</kbd></td><td>${v}</td></tr>`).join("")}</tbody></table></div>`;
@@ -1238,6 +1434,8 @@ document.addEventListener("keydown", (e) => {
     if (isTyping(e)) { e.target.blur(); return; }
   }
   if ($("#modal-root").innerHTML) { if (S.modalKeys) S.modalKeys(e); return; }
+  // Enter in a dd/mm/yyyy box saves it
+  if (e.key === "Enter" && e.target.matches?.(".dmy input[type=text]")) { e.target.blur(); e.preventDefault(); return; }
   if (isTyping(e) || e.metaKey || e.ctrlKey || e.altKey) return;
   if (S.viewerId) return; // the question viewer has its own buttons
   const pages = ["due", "chapters", "dashboard", "papers", "mistakes", "questions", "settings"];
@@ -1245,7 +1443,10 @@ document.addEventListener("keydown", (e) => {
   switch (e.key) {
     case "j": case "ArrowDown": if (S.drawerId) return; S.sel++; highlightSelection(); e.preventDefault(); return;
     case "k": case "ArrowUp": if (S.drawerId) return; S.sel--; highlightSelection(); e.preventDefault(); return;
-    case "r": { const id = S.drawerId || selectedId(); if (id) { openReview(id); e.preventDefault(); } return; }
+    case "r": {
+      const sub = !S.drawerId && rows()[S.sel]?.dataset.sub;
+      const id = S.drawerId || selectedId(); if (id) { openReview(id, "review", sub ? { only: [sub] } : {}); e.preventDefault(); } return;
+    }
     case "l": { const id = S.drawerId || selectedId(); if (id) { openReview(id, "learnt"); e.preventDefault(); } return; }
     case "Enter": case "o": {
       if (S.drawerId || e.target.closest("button, a, summary")) return;

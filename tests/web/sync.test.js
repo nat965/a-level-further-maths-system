@@ -49,7 +49,7 @@ test("create, open, change, and open again on another device", async () => {
   const b = new Tracker(remote(), code, fast);
   await b.open();
   const c = S.getChapter(b.doc, "3", T);
-  assert.deepEqual([c.first_learnt, c.confidence, c.review_count], [T, 3, 1]);
+  assert.deepEqual([c.first_learnt, c.confidence, c.review_count], [T, 3, 6]); // 6 subtopics
 });
 
 test("a wrong code is refused", async () => {

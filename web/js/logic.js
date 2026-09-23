@@ -56,6 +56,25 @@ export function parseDate(value) {
   return iso;
 }
 
+// Dates are shown and typed as dd/mm/yyyy.
+export function formatDMY(value) {
+  const d = parseDate(value);
+  return d ? `${d.slice(8, 10)}/${d.slice(5, 7)}/${d.slice(0, 4)}` : "";
+}
+
+// "3/1/2027", "03-01-27", "3.1.2027" and "2027-01-03" all mean 3 January 2027. Blank -> null.
+export function parseDMY(text) {
+  const s = String(text ?? "").trim();
+  if (!s) return null;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) {
+    try { return parseDate(s); } catch { throw new Error(`${s} isn't a real date`); }
+  }
+  const m = s.match(/^(\d{1,2})\s*[/.\- ]\s*(\d{1,2})\s*[/.\- ]\s*(\d{4}|\d{2})$/);
+  if (!m) throw new Error(`"${s}" isn't a date: type it as dd/mm/yyyy`);
+  const y = m[3].length === 2 ? 2000 + Number(m[3]) : Number(m[3]);
+  try { return parseDate(`${y}-${m[2].padStart(2, "0")}-${m[1].padStart(2, "0")}`); } catch { throw new Error(`${s} isn't a real date`); }
+}
+
 const dayNum = (iso) => Date.UTC(+iso.slice(0, 4), +iso.slice(5, 7) - 1, +iso.slice(8, 10)) / DAY;
 export const addDays = (iso, n) => new Date((dayNum(iso) + n) * DAY).toISOString().slice(0, 10);
 export const daysBetween = (from, to) => dayNum(to) - dayNum(from);

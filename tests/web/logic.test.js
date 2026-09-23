@@ -191,3 +191,13 @@ describe("papers and habits", () => {
     assert.equal(c[0].days, 603);
   });
 });
+
+test("dates are shown and typed as dd/mm/yyyy", () => {
+  assert.equal(L.formatDMY("2027-01-03"), "03/01/2027");
+  assert.equal(L.formatDMY(null), "");
+  for (const s of ["03/01/2027", "3/1/2027", "3-1-27", "3.1.2027", " 03 / 01 / 2027 ", "2027-01-03"]) assert.equal(L.parseDMY(s), "2027-01-03", s);
+  assert.equal(L.parseDMY(""), null);
+  assert.throws(() => L.parseDMY("31/02/2027"), /real date/);
+  assert.throws(() => L.parseDMY("01/13/2027"), /real date/);
+  assert.throws(() => L.parseDMY("tomorrow"), /dd\/mm\/yyyy/);
+});
