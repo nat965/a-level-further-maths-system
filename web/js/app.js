@@ -956,7 +956,12 @@ function showLogin(message) {
   const root = $("#login");
   root.hidden = false;
   if (!CONFIG.supabaseUrl || !CONFIG.supabaseKey) {
-    root.querySelector(".login-card").innerHTML = `<h1>Revision Tracker</h1><p>This site isn't connected to its database yet. Whoever runs it needs to fill in <code>config.js</code> (see the README).</p>`;
+    const fromBranch = location.hostname.endsWith("github.io") && /\/web\/?$/.test(location.pathname);
+    root.querySelector(".login-card").innerHTML = fromBranch
+      ? `<h1>Revision Tracker</h1><p>Almost there! GitHub Pages is publishing the repository's files instead of the website build, so the database settings haven't been applied.</p>
+         <ol><li>In the repository, go to <b>Settings → Pages</b>.</li><li>Under <b>Build and deployment → Source</b>, choose <b>GitHub Actions</b>.</li>
+         <li>Go to <b>Actions → Test and publish website → Run workflow</b>.</li></ol><p class="small muted">After a minute or two, reload this page.</p>`
+      : `<h1>Revision Tracker</h1><p>This site isn't connected to its database yet. Whoever runs it needs to set the Supabase URL and key (see the README).</p>`;
     return;
   }
   const err = $("#login-error");
