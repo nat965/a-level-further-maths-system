@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en-GB">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<title>Revision Tracker</title>
+<meta name="description" content="A-level Maths & Further Maths revision tracker with spaced repetition, past papers and a mistakes log.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%232a78d6'/%3E%3Cpath d='M9 17l5 5 9-12' stroke='white' stroke-width='3.2' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div id="login" class="login" hidden>
+  <div class="login-card">
+    <div class="brand"><span class="logo" aria-hidden="true">✓</span><span>Revision Tracker</span></div>
+    <p class="muted">A-level Maths &amp; Further Maths: spaced repetition, past papers and a mistakes log.</p>
+    <div id="login-choose">
+      <form id="login-form" autocomplete="off">
+        <label class="field" for="login-code">Your code</label>
+        <input id="login-code" class="code-input" placeholder="ABCD-EFGH-JKMN" inputmode="text" autocapitalize="characters" spellcheck="false" aria-describedby="login-error" required>
+        <label class="check"><input type="checkbox" id="login-remember"> Keep me logged in on this device <span class="muted small">(not on shared computers)</span></label>
+        <div id="login-error" class="login-error" role="alert" hidden></div>
+        <button id="login-submit" class="primary wide" type="submit">Open my tracker</button>
+      </form>
+      <div class="divider"><span>new here?</span></div>
+      <button id="create-tracker" class="wide" type="button">Start a new tracker</button>
+      <p class="small muted">You'll get a code for your own tracker, with all 80 chapters ready to go. Anyone with the code can open that tracker, so keep it private.</p>
+    </div>
+    <div id="login-new" hidden>
+      <h2>Your tracker is ready</h2>
+      <p>This is your code. <b>Write it down or save it somewhere safe</b>: it's the only way back into your tracker, and it can't be recovered if you lose it.</p>
+      <div class="code-display" id="new-code"></div>
+      <div class="form-row"><button type="button" id="copy-new">Copy code</button></div>
+      <label class="check"><input type="checkbox" id="new-remember" checked> Keep me logged in on this device</label>
+      <button type="button" id="open-new" class="primary wide">I've saved it: open my tracker</button>
+    </div>
+  </div>
+</div>
+
+<div class="shell" hidden>
+  <nav class="sidebar" aria-label="Main">
+    <div class="brand"><span class="logo" aria-hidden="true">✓</span><span>Revision Tracker</span></div>
+    <a href="#/due" data-nav="due"><span class="k">1</span>Due today<span class="badge" id="due-badge" hidden></span></a>
+    <a href="#/chapters" data-nav="chapters"><span class="k">2</span>Chapters</a>
+    <a href="#/dashboard" data-nav="dashboard"><span class="k">3</span>Dashboard</a>
+    <a href="#/papers" data-nav="papers"><span class="k">4</span>Past papers</a>
+    <a href="#/mistakes" data-nav="mistakes"><span class="k">5</span>Mistakes</a>
+    <a href="#/settings" data-nav="settings"><span class="k">6</span>Settings</a>
+    <div class="sidebar-foot">
+      <div id="save-status" class="save-status" aria-live="polite"></div>
+      <div id="today-label" class="muted"></div>
+      <div id="streak-label" class="muted"></div>
+      <button class="ghost small" data-action="theme" title="Toggle dark mode (T)">◐ Theme</button>
+      <button class="ghost small" data-action="help" title="Keyboard shortcuts (?)">⌨ Shortcuts</button>
+    </div>
+  </nav>
+  <main id="main" tabindex="-1"><div class="loading">Loading…</div></main>
+</div>
+<div id="offline" class="offline" role="alert" hidden>You're offline. Your changes are kept on this page and will save when you reconnect, so don't close this tab.</div>
+<div id="drawer-root"></div>
+<div id="modal-root"></div>
+<div id="toast-root" aria-live="polite"></div>
+<div id="tooltip" role="tooltip" hidden></div>
+<script type="module" src="js/app.js"></script>
+</body>
+</html>

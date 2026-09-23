@@ -1,8 +1,13 @@
-/* Revision Tracker front end: plain JS, no dependencies, works offline. */
-"use strict";
+// Revision Tracker website: plain JS modules, no dependencies.
+import CONFIG from "../config.js";
+import * as L from "./logic.js";
+import * as svc from "./service.js";
+import { Remote, Tracker, formatCode, normalizeCode } from "./sync.js";
+import { docToCSVs, parseCSV, zip } from "./files.js";
 
 const S = {
-  boot: null,          // /api/bootstrap payload (settings, today, enums)
+  tracker: null,       // the open tracker (see sync.js)
+  boot: null,          // today, settings and option lists derived from the tracker
   chapters: [],        // enriched chapters
   route: "due",
   sel: 0,              // keyboard-selected row index in the current list
@@ -38,14 +43,49 @@ function chapterLabel(c) { return `${c.book} · Ch ${c.ch_num} — ${c.title}`; 
 function chapterById(id) { return S.chapters.find((c) => c.id === id); }
 function isTyping(e) { const t = e.target; return t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName)); }
 
-async function api(method, path, body) {
-  const opts = { method, headers: {} };
-  if (body !== undefined) { opts.headers["Content-Type"] = "application/json"; opts.body = JSON.stringify(body); }
-  const res = await fetch(path, opts);
-  const ct = res.headers.get("Content-Type") || "";
-  const data = ct.includes("json") ? await res.json() : await res.text();
-  if (!res.ok) throw new Error((data && data.error) || `Request failed (${res.status})`);
-  return data;
+const today = () => CONFIG.today || L.localToday();
+
+// The pages ask for data with api("GET", "/api/...") and change it with other methods. Reads come
+// from the tracker document on this device; changes are applied straight away and saved to the
+// database in the background by the Tracker.
+async function api(method, path, body = {}) {
+  const T = today(), doc = S.tracker.doc;
+  const m = (re) => path.match(re);
+  let r;
+  if (method === "GET") {
+    if (path === "/api/chapters") return svc.listChapters(doc, T);
+    if (path === "/api/due") return svc.dueList(doc, T);
+    if ((r = m(/^\/api\/chapters\/([^/]+)\/history$/))) return svc.chapterHistory(doc, r[1], T);
+    if (path === "/api/dashboard") return svc.dashboard(doc, T);
+    if (path === "/api/papers") return svc.listPapers(doc);
+    if (path === "/api/papers/chart") return svc.paperChart(doc);
+    if (path === "/api/boundaries") return svc.listBoundaries(doc);
+    if (path === "/api/mistakes") return svc.listMistakes(doc, T);
+    if (path === "/api/settings") return svc.settingsOf(doc);
+    throw new Error(`Unknown page data: ${path}`);
+  }
+  const change = (op, result) => { S.tracker.apply(op); return result ? result(S.tracker.doc) : { ok: true }; };
+  const id = svc.newId();
+  if ((r = m(/^\/api\/chapters\/([^/]+)$/)) && method === "PATCH") return change((d) => svc.updateChapter(d, r[1], body, T), (d) => svc.getChapter(d, r[1], T));
+  if ((r = m(/^\/api\/chapters\/([^/]+)\/learnt$/))) return change((d) => svc.markLearnt(d, r[1], body.confidence, T));
+  if ((r = m(/^\/api\/chapters\/([^/]+)\/review$/))) {
+    const now = new Date().toISOString();
+    return change((d) => svc.reviewChapter(d, r[1], body.confidence, body.note, T, { reviewId: id, now }));
+  }
+  if ((r = m(/^\/api\/reviews\/([^/]+)$/)) && method === "DELETE") return change((d) => svc.deleteReview(d, r[1]));
+  if (path === "/api/papers" && method === "POST") return change((d) => svc.createPaper(d, body, { id }), (d) => svc.listPapers(d).find((p) => p.id === id));
+  if ((r = m(/^\/api\/papers\/([^/]+)$/)) && method === "DELETE") return change((d) => svc.deletePaper(d, r[1]));
+  if ((r = m(/^\/api\/papers\/([^/]+)\/questions$/))) return change((d) => svc.addQuestion(d, r[1], body, { id }));
+  if ((r = m(/^\/api\/questions\/([^/]+)$/)) && method === "DELETE") return change((d) => svc.deleteQuestion(d, r[1]));
+  if (path === "/api/boundaries" && method === "PUT") return change((d) => svc.upsertBoundary(d, body, { id }));
+  if ((r = m(/^\/api\/boundaries\/([^/]+)$/)) && method === "DELETE") return change((d) => svc.deleteBoundary(d, r[1]));
+  if (path === "/api/mistakes" && method === "POST") return change((d) => svc.createMistake(d, body, T, { id }));
+  if ((r = m(/^\/api\/mistakes\/([^/]+)$/)) && method === "PATCH") return change((d) => svc.updateMistake(d, r[1], body, T));
+  if ((r = m(/^\/api\/mistakes\/([^/]+)\/retest$/))) return change((d) => svc.retestMistake(d, r[1], Boolean(body.passed), T));
+  if ((r = m(/^\/api\/mistakes\/([^/]+)$/)) && method === "DELETE") return change((d) => svc.deleteMistake(d, r[1]));
+  if (path === "/api/settings" && method === "PUT") return change((d) => svc.saveSettings(d, body), (d) => svc.settingsOf(d));
+  if (path === "/api/settings/reset") return change((d) => svc.resetSettings(d, body.keys || []), (d) => svc.settingsOf(d));
+  throw new Error(`Unknown change: ${method} ${path}`);
 }
 
 function toast(msg, kind = "") {
@@ -87,7 +127,11 @@ function seriesDatalist() {
 
 // ------------------------------------------------------------------ data loading
 
-async function loadBoot() { S.boot = await api("GET", "/api/bootstrap"); applyTheme(); }
+async function loadBoot() {
+  S.boot = { today: today(), settings: svc.settingsOf(S.tracker.doc), statuses: L.STATUSES, error_types: L.ERROR_TYPES,
+             grades: L.GRADES, tables: [...svc.TABLES, "settings"] };
+  applyTheme();
+}
 async function loadChapters() { S.chapters = await api("GET", "/api/chapters"); updateBadges(); }
 function updateBadges() {
   const n = S.chapters.filter((c) => c.due).length;
@@ -528,7 +572,7 @@ async function renderPapers(main) {
   $$("form.q-form").forEach((f) => f.addEventListener("submit", async (e) => {
     e.preventDefault();
     const fd = new FormData(f);
-    const body = { q_num: fd.get("q_num"), chapter_id: fd.get("chapter_id") ? Number(fd.get("chapter_id")) : null, marks_lost: fd.get("marks_lost") === "" ? null : Number(fd.get("marks_lost")), error_type: fd.get("error_type"), fix: fd.get("fix") };
+    const body = { q_num: fd.get("q_num"), chapter_id: fd.get("chapter_id") || null, marks_lost: fd.get("marks_lost") === "" ? null : Number(fd.get("marks_lost")), error_type: fd.get("error_type"), fix: fd.get("fix") };
     await guard(() => api("POST", `/api/papers/${f.dataset.paper}/questions`, body));
     toast("Question logged — chapter priority updated"); render();
   }));
@@ -590,7 +634,7 @@ async function renderMistakes(main) {
   form.addEventListener("submit", async (e) => {
     e.preventDefault();
     const fd = new FormData(form);
-    await guard(() => api("POST", "/api/mistakes", { chapter_id: Number(fd.get("chapter_id")), source: fd.get("source"), what_wrong: fd.get("what_wrong"), correct_method: fd.get("correct_method"), retest_on: fd.get("retest_on") || null }));
+    await guard(() => api("POST", "/api/mistakes", { chapter_id: fd.get("chapter_id"), source: fd.get("source"), what_wrong: fd.get("what_wrong"), correct_method: fd.get("correct_method"), retest_on: fd.get("retest_on") || null }));
     toast("Mistake logged"); render();
   });
 }
@@ -599,7 +643,6 @@ async function renderMistakes(main) {
 
 async function renderSettings(main) {
   const s = S.boot.settings = await api("GET", "/api/settings");
-  const bk = await api("GET", "/api/backups");
   main.innerHTML = `<div class="page-head"><h1>Settings</h1></div>
   <div class="grid cols-2">
     <form class="card" data-settings="intervals"><h2>Spaced repetition intervals</h2>
@@ -626,7 +669,6 @@ async function renderSettings(main) {
     <form class="card" data-settings="general"><h2>General</h2>
       <div class="form-row">
         <label class="field">Theme<select name="theme">${["system", "light", "dark"].map((t) => `<option ${s.theme === t ? "selected" : ""}>${t}</option>`).join("")}</select></label>
-        <label class="field">Open in<select name="open_in"><option value="app_window" ${s.open_in === "app_window" ? "selected" : ""}>App window (Chrome/Edge)</option><option value="browser" ${s.open_in === "browser" ? "selected" : ""}>Default browser tab</option></select></label>
         <label class="field">Mistake retest gap (days)<input type="number" min="1" max="365" name="mistake_retest_days" value="${s.mistake_retest_days}" style="width:90px"></label>
         <label class="field" title="Used for the learning pace on the Dashboard">Learn every chapter by<input type="date" name="learn_by" value="${s.learn_by || ""}"></label>
         <span class="small muted" style="padding-bottom:8px">blank = your first exam</span>
@@ -634,40 +676,45 @@ async function renderSettings(main) {
       <div class="form-row" style="margin-top:10px"><button class="primary">Save</button></div></form>
   </div>
 
-  <div class="card section"><h2>Your data</h2>
-    <dl class="kv"><dt>Data file</dt><dd><code>${esc(S.boot.db_path)}</code></dd><dt>Backups folder</dt><dd><code>${esc(bk.dir)}</code></dd></dl>
-    <p class="small muted">A backup is made automatically each day the app is used (last 30 kept), and before every import or restore.</p>
+  <div class="card section"><h2>Your tracker</h2>
+    <dl class="kv"><dt>Your code</dt><dd><code class="code-big" id="my-code">${esc(S.tracker.code)}</code> <button class="small" data-action="copy-code">Copy</button></dd></dl>
+    <p class="small muted">Use this code to open your tracker on any device. Keep it private: anyone with it can open and change your tracker, and it can't be recovered if you lose it.</p>
+    <div class="form-row"><button data-action="logout">Log out on this device</button></div>
+    <h3 class="section">Download your data</h3>
     <div class="form-row">
-      <button data-action="backup-now">Back up now</button>
-      <a class="btn" href="/api/export/json" download>Export JSON (everything)</a>
-      <a class="btn" href="/api/export/csv" download>Export CSV (zip of tables)</a>
+      <button data-action="export-json">Export JSON (everything)</button>
+      <button data-action="export-csv">Export CSV (zip of tables)</button>
     </div>
-    <div class="form-row section">
+    <h3 class="section">Import</h3>
+    <p class="small muted" style="margin-top:0">Works with exports from this site and from the old desktop app. The server keeps a backup first, so you can undo an import from the list below.</p>
+    <div class="form-row">
       <label class="field">Import JSON export (replaces all data)<input type="file" accept=".json,application/json" id="import-json"></label>
       <label class="field">Import CSV into table<select id="import-table">${S.boot.tables.map((t) => `<option>${t}</option>`).join("")}</select></label>
       <label class="field">CSV file (replaces that table)<input type="file" accept=".csv,text/csv" id="import-csv"></label>
     </div>
     <h3 class="section">Backups</h3>
-    ${bk.backups.length ? `<div class="table-wrap"><table class="compact"><thead><tr><th>File</th><th>Saved</th><th>Size</th><th></th></tr></thead><tbody>${bk.backups.slice(0, 40).map((b) => `<tr><td><code class="small">${esc(b.name)}</code></td><td class="small">${esc(b.modified.replace("T", " "))}</td><td class="small num">${(b.size / 1024).toFixed(0)} KB</td><td><button class="small" data-action="restore" data-name="${esc(b.name)}">Restore</button></td></tr>`).join("")}</tbody></table></div>` : `<div class="muted small">No backups yet.</div>`}
-    <div class="form-row section"><button class="danger" data-action="quit">Quit Revision Tracker</button><span class="small muted">The app also closes itself a few minutes after you close its window. Version ${esc(S.boot.version)}.</span></div>
+    <p class="small muted" style="margin-top:0">The server keeps a copy of your tracker from the start of each day you use it (last 14 days), plus one before every restore.</p>
+    <div id="backup-list" class="muted small">Loading…</div>
   </div>`;
+  loadBackups();
 
   $$("form[data-settings]").forEach((form) => form.addEventListener("submit", (e) => { e.preventDefault(); saveSettingsForm(form); }));
   $("#import-json").addEventListener("change", async (e) => {
     const file = e.target.files[0]; if (!file) return;
-    if (!confirm("Replace ALL your data with this export? A backup of your current data is made first.")) { e.target.value = ""; return; }
-    let data; try { data = JSON.parse(await file.text()); } catch (_) { toast("That file isn't valid JSON", "error"); return; }
-    await guard(() => api("POST", "/api/import/json", data));
+    let doc;
+    try { doc = svc.normalize(JSON.parse(await file.text())); } catch (err) { toast(err instanceof SyntaxError ? "That file isn't valid JSON" : err.message, "error"); e.target.value = ""; return; }
+    if (!confirm(`Replace ALL your data with this file (${doc.chapters.length} chapters, ${doc.reviews.length} reviews, ${doc.papers.length} papers, ${doc.mistakes.length} mistakes)?`)) { e.target.value = ""; return; }
+    await S.tracker.flush();
+    S.tracker.replace(doc);
     toast("Import complete"); await reloadAll();
   });
   $("#import-csv").addEventListener("change", async (e) => {
     const file = e.target.files[0]; if (!file) return;
     const table = $("#import-table").value;
-    if (!confirm(`Replace the whole "${table}" table with this CSV? A backup is made first.`)) { e.target.value = ""; return; }
-    const res = await fetch(`/api/import/csv/${table}`, { method: "POST", headers: { "Content-Type": "text/csv" }, body: await file.text() });
-    const d = await res.json();
-    if (!res.ok) { toast(d.error, "error"); e.target.value = ""; return; }
-    toast(`Imported ${d.rows} rows into ${table}`); await reloadAll();
+    const rows = parseCSV(await file.text());
+    if (!confirm(`Replace the whole "${table}" table with the ${rows.length} rows in this CSV?`)) { e.target.value = ""; return; }
+    try { S.tracker.apply((d) => svc.replaceTable(d, table, rows)); } catch (err) { toast(err.message, "error"); e.target.value = ""; return; }
+    toast(`Imported ${rows.length} rows into ${table}`); await reloadAll();
   });
 }
 
@@ -684,12 +731,34 @@ async function saveSettingsForm(form) {
   if (kind === "priority") body = { priority_weights: Object.fromEntries(["confidence", "overdue", "marks", "learnt"].map((k) => [k, Number(fd.get(k))])), marks_half_point: Number(fd.get("marks_half_point")) };
   if (kind === "exams") body = { exams: $$(".exam-row", form).map((r) => ({ name: $("[name=exam-name]", r).value.trim(), date: $("[name=exam-date]", r).value, confirmed: $("[name=exam-confirmed]", r).checked })) };
   if (kind === "papers") body = { papers: s.papers.map((p, i) => ({ code: p.code, name: fd.get(`name-${i}`), max: Number(fd.get(`max-${i}`)) })) };
-  if (kind === "general") body = { theme: fd.get("theme"), open_in: fd.get("open_in"), mistake_retest_days: parseInt(fd.get("mistake_retest_days"), 10), learn_by: fd.get("learn_by") || null };
+  if (kind === "general") body = { theme: fd.get("theme"), mistake_retest_days: parseInt(fd.get("mistake_retest_days"), 10), learn_by: fd.get("learn_by") || null };
   S.boot.settings = await guard(() => api("PUT", "/api/settings", body));
   applyTheme(); await loadChapters(); toast("Settings saved");
 }
 
 async function reloadAll() { await loadBoot(); await render(); refreshStreak(); }
+
+async function loadBackups() {
+  const el = $("#backup-list");
+  try {
+    await S.tracker.flush();
+    const list = await S.tracker.remote.listBackups(S.tracker.code);
+    if (!el.isConnected) return;
+    el.classList.remove("muted", "small");
+    el.innerHTML = list.length ? `<div class="table-wrap"><table class="compact"><thead><tr><th>Saved</th><th>Kind</th><th>Size</th><th></th></tr></thead><tbody>${list.map((b) =>
+      `<tr><td class="small">${esc(new Date(b.saved_at).toLocaleString("en-GB", { dateStyle: "medium", timeStyle: "short" }))}</td><td class="small">${b.kind === "daily" ? "Start of day" : "Before a restore"}</td><td class="small num">${Math.max(1, Math.round(b.size / 1024))} KB</td><td><button class="small" data-action="restore" data-backup="${b.id}" data-when="${esc(new Date(b.saved_at).toLocaleString("en-GB", { dateStyle: "medium", timeStyle: "short" }))}">Restore</button></td></tr>`).join("")}</tbody></table></div>`
+      : `<span class="muted small">No backups yet. The first one is made the first time you save something on a new day.</span>`;
+  } catch (e) {
+    if (el.isConnected) el.textContent = `Couldn't load backups: ${e.message}`;
+  }
+}
+
+function download(filename, data, type) {
+  const url = URL.createObjectURL(new Blob([data], { type }));
+  const a = Object.assign(document.createElement("a"), { href: url, download: filename });
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
 
 // ------------------------------------------------------------------ events
 
@@ -701,7 +770,7 @@ document.addEventListener("click", async (e) => {
     drawChapterTable(); return;
   }
   const el = e.target.closest("[data-action]"); if (!el) return;
-  const id = el.dataset.id ? Number(el.dataset.id) : null;
+  const id = el.dataset.id || null;
   const a = el.dataset.action;
   if (el.tagName === "A") e.preventDefault();
   switch (a) {
@@ -736,13 +805,21 @@ document.addEventListener("click", async (e) => {
     case "del-mistake": if (!confirm("Delete this mistake?")) return; await guard(() => api("DELETE", `/api/mistakes/${id}`)); return render();
     case "add-exam": $("#exam-rows").insertAdjacentHTML("beforeend", examRow({ name: "", date: S.boot.today, confirmed: false })); return;
     case "remove-exam": el.closest(".exam-row").remove(); return;
-    case "backup-now": { const r = await guard(() => api("POST", "/api/backups")); toast(`Backup saved: ${r.name}`); return render(); }
     case "restore":
-      if (!confirm(`Restore ${el.dataset.name}? Your current data is backed up first.`)) return;
-      await guard(() => api("POST", "/api/backups/restore", { name: el.dataset.name })); toast("Backup restored"); return reloadAll();
-    case "quit":
-      await api("POST", "/api/quit").catch(() => {});
-      document.body.innerHTML = `<div class="empty" style="margin:20vh auto;max-width:420px">Revision Tracker has stopped. You can close this window.</div>`; return;
+      if (!confirm(`Restore your tracker to how it was on ${el.dataset.when}? Your current data is kept as a backup first.`)) return;
+      await guard(async () => { await S.tracker.flush(); await S.tracker.remote.restoreBackup(S.tracker.code, Number(el.dataset.backup)); await S.tracker.refresh(); });
+      toast("Backup restored"); return reloadAll();
+    case "export-json":
+      return download(`revision-tracker-${today()}.json`, JSON.stringify({ ...S.tracker.doc, exported_at: new Date().toISOString() }, null, 1), "application/json");
+    case "export-csv":
+      return download(`revision-tracker-csv-${today()}.zip`, zip(docToCSVs(S.tracker.doc)), "application/zip");
+    case "copy-code":
+      try { await navigator.clipboard.writeText(S.tracker.code); toast("Code copied"); } catch { toast("Couldn't copy: select the code and copy it yourself", "error"); }
+      return;
+    case "logout":
+      if (S.tracker.unsaved && !confirm("Some changes haven't saved yet. Log out anyway?")) return;
+      if (!confirm("Log out on this device? You'll need your code to open your tracker again.")) return;
+      forgetCode(); location.hash = ""; location.reload(); return;
   }
 });
 
@@ -756,7 +833,7 @@ document.addEventListener("change", async (e) => {
   const el = e.target;
   if (el.dataset.filter) { S.filters[el.dataset.filter] = el.value; S.sel = 0; return drawChapterTable(); }
   const kind = el.dataset.change; if (!kind) return;
-  const id = Number(el.dataset.id);
+  const id = el.dataset.id;
   if (kind === "status") { await guard(() => api("PATCH", `/api/chapters/${id}`, { [el.dataset.field]: el.value })); el.className = `st-${el.value}`; return softRefresh(id); }
   if (kind === "confidence") { await guard(() => api("PATCH", `/api/chapters/${id}`, { confidence: el.value ? Number(el.value) : null })); return softRefresh(id); }
   if (kind === "first-learnt") {
@@ -790,7 +867,7 @@ function highlightSelection(scroll = true) {
   r.forEach((el, i) => el.classList.toggle("selected", i === S.sel));
   if (scroll) r[S.sel].scrollIntoView({ block: "nearest" });
 }
-function selectedId() { const r = rows()[S.sel]; return r && r.dataset.id ? Number(r.dataset.id) : null; }
+function selectedId() { const r = rows()[S.sel]; return r && r.dataset.id ? r.dataset.id : null; }
 
 function openHelp() {
   const keys = [["1 – 6", "Go to Due / Chapters / Dashboard / Papers / Mistakes / Settings"], ["j / k or ↓ / ↑", "Move selection"], ["l", "Learnt today (selected chapter)"], ["r", "Reviewed today (selected chapter)"], ["Enter or o", "Open chapter history"], ["1 – 5 then Enter", "Set confidence in the review dialog"], ["/", "Search chapters"], ["n", "New paper attempt / mistake (on those pages)"], ["t", "Toggle dark mode"], ["Esc", "Close dialog / panel"], ["?", "This help"]];
@@ -823,26 +900,127 @@ document.addEventListener("keydown", (e) => {
   }
 });
 
-// ------------------------------------------------------------------ lifecycle
+// ------------------------------------------------------------------ login & lifecycle
 
-function heartbeat() {
-  api("POST", "/api/heartbeat").then((r) => {
-    $("#offline").hidden = true;
-    if (S.boot && r.today !== S.boot.today) { S.boot.today = r.today; render(); refreshStreak(); } // new day: recalc everything
-  }).catch(() => { $("#offline").hidden = false; });
+const CODE_KEY = "rt-code";
+function rememberedCode() {
+  try { return sessionStorage.getItem(CODE_KEY) || localStorage.getItem(CODE_KEY); } catch { return null; }
 }
-setInterval(heartbeat, 20000);
-document.addEventListener("visibilitychange", () => { if (!document.hidden) heartbeat(); });
-window.addEventListener("pagehide", () => { navigator.sendBeacon && navigator.sendBeacon("/api/bye"); });
+function rememberCode(code, keep) {
+  try {
+    sessionStorage.setItem(CODE_KEY, code);
+    if (keep) localStorage.setItem(CODE_KEY, code); else localStorage.removeItem(CODE_KEY);
+  } catch { /* private browsing: the code just isn't remembered */ }
+}
+function forgetCode() {
+  try { sessionStorage.removeItem(CODE_KEY); localStorage.removeItem(CODE_KEY); } catch { /* ignore */ }
+}
+
+const STATUS_TEXT = { saved: "✓ All changes saved", saving: "Saving…", offline: "Offline — will save when you're back online", error: "Couldn't save" };
+function showStatus(state, detail) {
+  const el = $("#save-status");
+  el.textContent = state === "error" && detail ? `Couldn't save: ${detail}` : STATUS_TEXT[state];
+  el.dataset.state = state;
+  $("#offline").hidden = state !== "offline";
+}
+
+function makeRemote() { return new Remote({ url: CONFIG.supabaseUrl, key: CONFIG.supabaseKey }); }
+
+async function openTracker(code, keep) {
+  const tracker = new Tracker(makeRemote(), code, {
+    onStatus: showStatus,
+    onChange: async (info) => {
+      await loadBoot(); await render(); refreshStreak();
+      if (S.drawerId) { try { await openChapter(S.drawerId); } catch { closeDrawer(); } }
+      if (info.dropped?.length) toast(`Updated from another device. ${plural(info.dropped.length, "change")} couldn't be applied: ${info.dropped[0]}`, "error");
+      else if (info.merged) toast("Merged with changes from another device");
+    },
+  });
+  await tracker.open();
+  S.tracker = tracker;
+  rememberCode(tracker.code, keep);
+  $("#login").hidden = true;
+  $(".shell").hidden = false;
+  showStatus("saved");
+  await loadBoot();
+  if (!location.hash || location.hash === "#") history.replaceState(null, "", "#/due");
+  await render();
+  refreshStreak();
+}
+
+function showLogin(message) {
+  $(".shell").hidden = true;
+  const root = $("#login");
+  root.hidden = false;
+  if (!CONFIG.supabaseUrl || !CONFIG.supabaseKey) {
+    root.querySelector(".login-card").innerHTML = `<h1>Revision Tracker</h1><p>This site isn't connected to its database yet. Whoever runs it needs to fill in <code>config.js</code> (see the README).</p>`;
+    return;
+  }
+  const err = $("#login-error");
+  err.textContent = message || "";
+  err.hidden = !message;
+  $("#login-code").focus();
+}
+
+$("#login-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const code = $("#login-code").value;
+  const btn = $("#login-submit");
+  if (normalizeCode(code).length !== 12) return showLogin("Codes are 12 letters and numbers, like ABCD-EFGH-JKMN.");
+  btn.disabled = true; btn.textContent = "Opening…";
+  try { await openTracker(code, $("#login-remember").checked); }
+  catch (err) { showLogin(err.message); }
+  finally { btn.disabled = false; btn.textContent = "Open my tracker"; }
+});
+$("#login-code").addEventListener("input", (e) => {
+  const raw = normalizeCode(e.target.value).slice(0, 12);
+  const pretty = formatCode(raw);
+  if (pretty !== e.target.value) e.target.value = pretty;
+});
+
+$("#create-tracker").addEventListener("click", async () => {
+  const btn = $("#create-tracker");
+  btn.disabled = true; btn.textContent = "Creating…";
+  try {
+    const seed = await (await fetch("seed_chapters.json")).json();
+    const code = await makeRemote().create(svc.newTracker(seed));
+    $("#login-choose").hidden = true;
+    $("#login-new").hidden = false;
+    $("#new-code").textContent = code;
+    $("#open-new").onclick = () => openTracker(code, $("#new-remember").checked).catch((err) => showLogin(err.message));
+    $("#copy-new").onclick = async () => {
+      try { await navigator.clipboard.writeText(code); toast("Code copied"); } catch { toast("Couldn't copy: select the code and copy it yourself", "error"); }
+    };
+  } catch (err) {
+    showLogin(`Couldn't create a tracker: ${err.message}`);
+  } finally {
+    btn.disabled = false; btn.textContent = "Start a new tracker";
+  }
+});
+
+// Pick up changes from your other devices when you come back to this tab, and roll over to a
+// new day at midnight.
+document.addEventListener("visibilitychange", async () => {
+  if (document.hidden || !S.tracker) return;
+  try { await S.tracker.refresh(); } catch { /* offline: try again next time */ }
+  if (S.boot && today() !== S.boot.today) { await loadBoot(); render(); refreshStreak(); }
+});
+setInterval(() => {
+  if (S.tracker && S.boot && today() !== S.boot.today) { loadBoot().then(() => { render(); refreshStreak(); }); }
+}, 60000);
+window.addEventListener("beforeunload", (e) => {
+  if (S.tracker?.unsaved) { e.preventDefault(); e.returnValue = ""; }
+});
 
 (async function start() {
+  const code = rememberedCode();
+  if (!code || !CONFIG.supabaseUrl) return showLogin();
   try {
-    await loadBoot();
-    heartbeat();
-    if (!location.hash) history.replaceState(null, "", "#/due");
-    await render();
-    refreshStreak();
+    let keep = false;
+    try { keep = localStorage.getItem(CODE_KEY) === code; } catch { /* ignore */ }
+    await openTracker(code, keep);
   } catch (e) {
-    $("#main").innerHTML = `<div class="empty">Couldn't reach the Revision Tracker server. Is it running?<br><span class="small">${esc(e.message)}</span></div>`;
+    if (e.status === 404) forgetCode();
+    showLogin(e.message);
   }
 })();

@@ -1,0 +1,57 @@
+# Tests the website, then publishes the web/ folder to GitHub Pages. Runs on every push to the
+# main branches, so any change appears on the live site a minute or two later.
+name: Test and publish website
+
+on:
+  push:
+    branches: [main, claude/astar-maths-revision-system-c3d28w]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm test
+
+  publish:
+    needs: test
+    # Free GitHub Pages needs a public repository; until it's public, only the tests run.
+    if: ${{ !github.event.repository.private }}
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      # If the Supabase details are set as repository variables (Settings > Secrets and
+      # variables > Actions > Variables), use them; otherwise web/config.js is published as is.
+      - name: Write config.js from repository variables
+        if: ${{ vars.SUPABASE_URL != '' && vars.SUPABASE_KEY != '' }}
+        env:
+          SUPABASE_URL: ${{ vars.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ vars.SUPABASE_KEY }}
+        run: |
+          node -e 'const fs = require("fs");
+            const cfg = { supabaseUrl: process.env.SUPABASE_URL.trim(), supabaseKey: process.env.SUPABASE_KEY.trim() };
+            fs.writeFileSync("web/config.js", "export default " + JSON.stringify(cfg, null, 2) + ";\n");'
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: web
+      - id: deployment
+        uses: actions/deploy-pages@v4

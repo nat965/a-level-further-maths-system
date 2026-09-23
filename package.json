@@ -1,0 +1,13 @@
+{
+  "name": "revision-tracker",
+  "private": true,
+  "type": "module",
+  "description": "A-level Maths & Further Maths revision tracker website",
+  "scripts": {
+    "test": "node --test \"tests/web/*.test.js\"",
+    "dev": "node tools/dev-server.mjs"
+  },
+  "devDependencies": {
+    "@electric-sql/pglite": "^0.3.0"
+  }
+}

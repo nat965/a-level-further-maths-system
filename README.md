@@ -1,54 +1,35 @@
 # Revision Tracker
 
-A desktop revision tracker for **OCR A-level Maths (H240)** and **OCR A Further Maths (H245: Further Statistics + Further Mechanics)**. It runs entirely on your own computer, opens in its own window, and keeps all your data in one local file.
+A revision tracker website for **OCR A-level Maths (H240)** and **OCR A Further Maths (H245: Further Statistics + Further Mechanics)**. It covers spaced repetition, past papers, question-level analysis and a mistakes log.
 
-It comes pre-loaded with your 80 chapters (6 textbooks). Each has its strand, book, chapter number, sections and level (AS/A). Everything is scheduled around **when you first learnt each chapter**, not a school timetable.
+- **Open it anywhere** (laptop, phone, school computer) at the site's address. Type in your code and you're in your own tracker.
+- **Everyone gets their own tracker.** Press *Start a new tracker* to get a new code. Each tracker starts with the same 80 chapters and is completely separate from everyone else's.
+- **Nothing to download or update.** Changes to the site go live automatically.
 
----
-
-## Setup (once)
-
-You need **Python 3.9 or newer**. The app uses nothing else: no other installs and no internet.
-
-### Mac
-
-1. Install Python from **https://www.python.org/downloads/macos/**. Download the latest "macOS 64-bit universal2 installer" and run it.
-2. Put this folder somewhere permanent, e.g. `Documents/Revision Tracker`.
-3. **Right-click** `Mac - first time setup.command` → **Open** → **Open**. You only need to right-click the first time, because macOS is cautious about downloaded scripts.
-   - It checks Python, lets the launcher run, puts a **Revision Tracker** alias on your Desktop and starts the app.
-
-From then on: **double-click "Revision Tracker"** (on your Desktop or in this folder).
-
-> If macOS says the app "can't be opened", right-click it → **Open** once. Setup normally prevents this.
-
-### Windows
-
-1. Install Python from **https://www.python.org/downloads/windows/**. In the installer, **tick "Add python.exe to PATH"**, then click *Install Now*.
-2. Put this folder somewhere permanent, e.g. `Documents\Revision Tracker`.
-3. Double-click **`Windows - first time setup.bat`**.
-   - It checks Python, puts a **Revision Tracker** shortcut (with icon) on your Desktop and starts the app.
-
-From then on: **double-click the "Revision Tracker" shortcut**. You can also double-click `Revision Tracker.pyw` in this folder. If that doesn't work, use `Start Revision Tracker (Windows).bat`.
-
-### How it runs
-
-- It opens as an **app window** if you have Chrome, Edge or Brave; otherwise it opens a normal browser tab. You can change this in Settings.
-- No terminal window stays open. The app **closes itself a few minutes after you close its window**, or you can use *Settings → Quit*.
-- Double-clicking while it's already running just opens another window onto the same app.
+Everything is scheduled around **when you first learnt each chapter**.
 
 ---
 
-## Your data
+## Your code
 
-| What | Where |
-|---|---|
-| Data file (SQLite) | Mac: `~/Library/Application Support/RevisionTracker/tracker.sqlite3`<br>Windows: `%APPDATA%\RevisionTracker\tracker.sqlite3` |
-| Automatic backups | `backups/` next to the data file |
+- Your code (like `X9RZ-Q5E6-JU2C`) **is your login**. There's no email or password.
+- **Keep it private:** anyone with it can open and change your tracker.
+- **Write it down:** if you lose it, the tracker can't be recovered. You can always see it in *Settings*.
+- Typing it in, capitals, spaces and dashes don't matter.
+- Tick *Keep me logged in on this device* on your own phone or laptop. Leave it unticked on shared computers.
+- The site only stores a scrambled (hashed) version of each code. Even someone with access to the database can't read codes out of it.
 
-- Your data lives **outside this folder**, so replacing or updating the app never touches it. Settings shows the exact paths.
-- **Automatic daily backup:** a copy is saved on each day you use the app, and the last 30 are kept. A backup is also saved before every import or restore. You can restore any of them from *Settings → Backups*.
-- **Export:** *Settings → Export JSON* saves everything in one file; *Export CSV* saves a zip with one spreadsheet-friendly CSV per table.
-- **Import:** *Import JSON* restores a full export. *Import CSV* replaces one table, e.g. `chapters.csv` after editing it in a spreadsheet.
+## Using two devices
+
+Changes save automatically, and the status in the menu says when everything's saved. If you change things on your phone and laptop at the same time, both sets of changes are kept. When you switch back to a tab, it picks up anything you did on the other device.
+
+If you lose your connection, keep the tab open: your changes save when you're back online.
+
+## Backups, export and import
+
+- **Automatic backups:** the server keeps a copy of your tracker from the start of each day you use it, for 14 days. It also keeps one before every restore. Restore any of them from *Settings → Backups*.
+- **Export:** *Settings → Export JSON* downloads everything as one file. *Export CSV* downloads a zip with one spreadsheet-friendly file per table.
+- **Import:** *Import JSON* replaces your tracker with an export. This also works with files from the old desktop app, so you can move your data across. *Import CSV* replaces one table.
 
 ---
 
@@ -61,13 +42,13 @@ From then on: **double-click the "Revision Tracker" shortcut**. You can also dou
 | **Dashboard** | Progress by strand and by book, your **learning pace** (ahead or behind), top 10 weakest chapters, review streak and reviews this week, paper averages vs A*, and exam countdown. |
 | **Past papers** | Log attempts (paper, series, date, mark, time) and the **questions you dropped marks on** (chapter, marks lost, error type, fix). Shows a chart of % over time per paper with the A* line, and your grade boundaries. |
 | **Mistakes** | Date is added automatically. Log chapter, source, what went wrong and the correct method, with a **retest date** that feeds the due list. Tick "passed" when you've got it right. |
-| **Settings** | Review intervals, priority weights, exam dates, learn-everything-by date, paper max marks, theme, and your data. |
+| **Settings** | Review intervals, priority weights, exam dates, learn-everything-by date, paper max marks and theme. Also your code, log out, backups, and export/import. |
 
-**Learnt today** (★) appears on chapters you haven't learnt yet. It stamps today as the date you first learnt the chapter and asks for your confidence, which schedules the first review. For chapters you learnt before using the app, pick the date in the chapter's panel instead. Reviewing a chapter you haven't marked as learnt also marks it as learnt that day.
+**Learnt today** (★) appears on chapters you haven't learnt yet. It stamps today as the date you first learnt the chapter and asks for your confidence, which schedules the first review. For chapters you learnt before you started using the site, pick the date in the chapter's panel instead. Reviewing a chapter you haven't marked as learnt also marks it as learnt that day.
 
 **Reviewed today** is on every learnt chapter. It stamps today's date and logs the review in the chapter's history. It also asks for your new confidence (1–5) and shows when the next review will be. You never type a review date. If you log one by mistake, use *Undo* in the chapter's history.
 
-### Keyboard shortcuts (press `?` in the app)
+### Keyboard shortcuts (on a computer; press `?` on the site)
 
 | Key | Action |
 |---|---|
@@ -113,35 +94,66 @@ Chapters you haven't learnt yet are never due.
 
 - **Exam dates** are placeholders marked *est.* until OCR publishes the June 2028 timetable. Tick *confirmed* once you have the real dates.
 - **Max marks:** H240/01, /02 and /03 are 100 marks each (checked against the OCR H240 specification). Y540–Y543 default to 75; check this against the H245 specification.
-- The school teaching term from your spreadsheet is kept in the data file (and in exports) but isn't used anywhere.
+
+---
+
+## Setting up the website (once)
+
+The site is static files on **GitHub Pages**, and the data lives in a free **Supabase** database. This takes about 10 minutes. Both services are free.
+
+### 1. Create the database (Supabase)
+
+1. Sign up at **https://supabase.com** and click **New project**. Pick any name and database password, and choose the **London** region.
+2. When it's ready, open **SQL Editor → New query**. Paste in the whole of [`supabase/schema.sql`](supabase/schema.sql) and press **Run**. You should see "Success. No rows returned".
+3. Open **Project Settings → API Keys** (or **Connect**) and copy two things:
+   - the **Project URL**, like `https://abcdefghijklmnop.supabase.co`
+   - the **publishable key** (`sb_publishable_…`), or on older projects the **anon public** key.
+
+   Both are safe to share: the database only allows the functions in `schema.sql`, and each needs a tracker's code. **Never use the `secret` / `service_role` key.**
+
+### 2. Publish the site (GitHub Pages)
+
+1. GitHub only hosts Pages for private repositories on a paid plan. So make this repository public: **Settings → General → Danger Zone → Change visibility → Public**. Only the code becomes visible. Trackers live in Supabase and need their codes.
+2. **Settings → Pages → Build and deployment → Source: GitHub Actions.**
+3. **Settings → Secrets and variables → Actions → Variables tab → New repository variable.** Add:
+   - `SUPABASE_URL` = your Project URL
+   - `SUPABASE_KEY` = your publishable (or anon) key
+4. **Actions → Test and publish website → Run workflow.** After a minute or two the site is live at **https://nat965.github.io/a-level-further-maths-system/**.
+
+From then on, every change pushed to the repository runs the tests and updates the live site automatically.
+
+### Good to know
+
+- **Supabase pauses free projects after a week with no activity** (for example, over a holiday). If the site says it can't reach the server, open your Supabase dashboard and press **Restore project**. No data is lost.
+- The site allows at most **500 trackers**, so a stranger can't fill the free database. Each tracker is limited to 5 MB, far more than a tracker will ever need.
+- To change the database later, edit `supabase/schema.sql` and run it again in the SQL Editor. It's safe to re-run and keeps all trackers.
 
 ---
 
 ## For developers
 
 ```
-revision_tracker/
-  logic.py        pure calculations: dates, spaced repetition, schedule, priority, grades
-  db.py           SQLite schema, seeding, settings, backups, export/import
-  service.py      application operations used by the API
-  server.py       local HTTP server (127.0.0.1 only) + JSON API
-  main.py         launcher: single instance, opens the window, auto-exit
-  static/         the interface (plain HTML/CSS/JS, no build step)
-  seed_chapters.json   the 80 chapters, generated from seed/Maths_Further_Maths_Tracker.xlsx
-tests/
-  test_logic.py   unit tests for dates and priority
-  test_api.py     integration tests against a real server on a temp data folder
-  test_e2e.py     launches the app and drives it in a real browser (needs Playwright)
+web/                  the website (plain HTML/CSS/JS modules, no build step)
+  js/logic.js         pure calculations: dates, spaced repetition, pace, priority, grades
+  js/service.js       the tracker document and every change you can make to it
+  js/sync.js          talks to Supabase; saves in the background, merges changes from other devices
+  js/files.js         CSV and zip export/import
+  js/app.js           the pages
+  config.js           Supabase URL + key (filled in by the publish workflow)
+  seed_chapters.json  the 80 chapters (from seed/Maths_Further_Maths_Tracker.xlsx)
+supabase/schema.sql   database tables and functions
+tools/dev-server.mjs  runs the whole site locally, with the real schema in PGlite instead of Supabase
+tests/web/            unit and database tests (node --test)
+tests/e2e/            browser test of the whole site (Playwright)
 ```
 
-Run the tests from this folder:
-
 ```
-python3 -m unittest discover -s tests -t . -v
+npm install
+npm run dev              # http://127.0.0.1:8080, no Supabase account needed
+npm test                 # logic, tracker operations, sync and database tests
+python3 -m unittest discover -s tests/e2e -v   # needs: pip install playwright && playwright install chromium
 ```
 
-The browser test is skipped unless Playwright is installed (`pip install playwright && playwright install chromium`). Set `E2E_SCREENSHOTS=some/folder` to save screenshots of every page.
+`npm run dev -- --today 2027-01-10` pretends it's another day, and `--data .devdata` keeps local data between runs.
 
-Useful options: `python3 -m revision_tracker --no-browser --port 8765 --data-dir ./my-data`. `REVISION_TRACKER_TODAY=2027-01-10` pretends it's a different day (for testing).
-
-To regenerate the seed after editing the spreadsheet: `pip install openpyxl`, then `python3 tools/xlsx_to_seed.py seed/Maths_Further_Maths_Tracker.xlsx`. The seed is only used when the database is first created.
+To regenerate the chapter list after editing the spreadsheet: `pip install openpyxl`, then `python3 tools/xlsx_to_seed.py seed/Maths_Further_Maths_Tracker.xlsx`. New trackers start from this list.

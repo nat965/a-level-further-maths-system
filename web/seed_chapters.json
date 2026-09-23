@@ -5,10 +5,7 @@
   "ch_num": 1,
   "title": "Proof and mathematical communication",
   "sections": "Structures & arguments; Inequality notation; Disproof by counter-example; Proof by deduction; Proof by exhaustion",
-  "level": "AS",
-  "terms": [
-   "Autumn Y12"
-  ]
+  "level": "AS"
  },
  {
   "strand": "Pure",
@@ -16,10 +13,7 @@
   "ch_num": 2,
   "title": "Indices and surds",
   "sections": "Laws of indices; Working with surds",
-  "level": "AS",
-  "terms": [
-   "Autumn Y12"
-  ]
+  "level": "AS"
  },
  {
   "strand": "Pure",
@@ -27,10 +21,7 @@
   "ch_num": 3,
   "title": "Quadratic functions",
   "sections": "Review; Graphs; Completing the square; Quadratic inequalities; Discriminant; Disguised quadratics",
-  "level": "AS",
-  "terms": [
-   "Autumn Y12"
-  ]
+  "level": "AS"
  },
  {
   "strand": "Pure",
@@ -38,10 +29,7 @@
   "ch_num": 4,
   "title": "Polynomials",
   "sections": "Working with polynomials; Polynomial division; Factor theorem; Sketching polynomials",
-  "level": "AS",
-  "terms": [
-   "Autumn Y12"
-  ]
+  "level": "AS"
  },
  {
   "strand": "Pure",
@@ -49,10 +37,7 @@
   "ch_num": 5,
   "title": "Using graphs",
   "sections": "Intersections; Discriminant revisited; Transforming graphs; Graphs of a/x and a/x²; Direct & inverse proportion; Inequalities in two variables",
-  "level": "AS",
-  "terms": [
-   "Autumn Y12"
-  ]
+  "level": "AS"
  },
  {
   "strand": "Pure",
@@ -60,10 +45,7 @@
   "ch_num": 6,
   "title": "Coordinate geometry",
   "sections": "Midpoint & distance; Straight lines; Parallel & perpendicular; Equation of a circle; Lines & circles problems",
-  "level": "AS",
-  "terms": [
-   "Autumn Y12"
-  ]
+  "level": "AS"
  },
  {
   "strand": "Pure",
@@ -71,10 +53,7 @@
   "ch_num": 7,
   "title": "Logarithms",
   "sections": "Introducing logs; Laws of logs; Exponential equations; Disguised quadratics",
-  "level": "AS",
-  "terms": [
-   "Autumn Y12"
-  ]
+  "level": "AS"
  },
  {
   "strand": "Pure",
@@ -82,10 +61,7 @@
   "ch_num": 8,
   "title": "Exponential models",
   "sections": "Exponential graphs; Log graphs; Modelling; Fitting models to data",
-  "level": "AS",
-  "terms": [
-   "Autumn Y12"
-  ]
+  "level": "AS"
  },
  {
   "strand": "Pure",
@@ -93,10 +69,7 @@
   "ch_num": 9,
   "title": "Binomial expansion",
   "sections": "Binomial theorem; Binomial coefficients; Applications",
-  "level": "AS",
-  "terms": [
-   "Autumn Y12"
-  ]
+  "level": "AS"
  },
  {
   "strand": "Pure",
@@ -104,10 +77,7 @@
   "ch_num": 10,
   "title": "Trigonometric functions and equations",
   "sections": "Sin & cos graphs; Tan; Exact values; Identities; Trig equations; Transformations; Harder trig equations",
-  "level": "AS",
-  "terms": [
-   "Autumn Y12"
-  ]
+  "level": "AS"
  },
  {
   "strand": "Pure",
@@ -115,10 +85,7 @@
   "ch_num": 11,
   "title": "Triangle geometry",
   "sections": "Sine rule; Cosine rule; Area of a triangle",
-  "level": "AS",
-  "terms": [
-   "Autumn Y12"
-  ]
+  "level": "AS"
  },
  {
   "strand": "Pure",
@@ -126,10 +93,7 @@
   "ch_num": 12,
   "title": "Vectors",
   "sections": "Describing vectors; Operations; Position & displacement; Geometric problems",
-  "level": "AS",
-  "terms": [
-   "Autumn Y12"
-  ]
+  "level": "AS"
  },
  {
   "strand": "Pure",
@@ -137,10 +101,7 @@
   "ch_num": 13,
   "title": "Differentiation",
   "sections": "Sketching derivatives; First principles; Rules; Terms of form axⁿ; Interpreting 1st & 2nd derivatives",
-  "level": "AS",
-  "terms": [
-   "Autumn Y12"
-  ]
+  "level": "AS"
  },
  {
   "strand": "Pure",
@@ -148,10 +109,7 @@
   "ch_num": 14,
   "title": "Applications of differentiation",
   "sections": "Tangents & normals; Stationary points; Optimisation",
-  "level": "AS",
-  "terms": [
-   "Autumn Y12"
-  ]
+  "level": "AS"
  },
  {
   "strand": "Pure",
@@ -159,10 +117,7 @@
   "ch_num": 15,
   "title": "Integration",
   "sections": "Rules; Terms of form axⁿ; Equation of a curve; Definite integration; Area under a curve",
-  "level": "AS",
-  "terms": [
-   "Autumn Y12"
-  ]
+  "level": "AS"
  },
  {
   "strand": "Pure",
@@ -170,10 +125,7 @@
   "ch_num": 1,
   "title": "Proof and mathematical communication",
   "sections": "Methods of proof; Proof by contradiction; Criticising proofs",
-  "level": "A",
-  "terms": [
-   "Spring Y12"
-  ]
+  "level": "A"
  },
  {
   "strand": "Pure",
@@ -181,11 +133,7 @@
   "ch_num": 2,
   "title": "Functions",
   "sections": "Mappings & functions; Domain & range; Composite functions; Inverse functions",
-  "level": "A",
-  "terms": [
-   "Autumn Y12",
-   "Spring Y12"
-  ]
+  "level": "A"
  },
  {
   "strand": "Pure",
@@ -193,10 +141,7 @@
   "ch_num": 3,
   "title": "Further transformations of graphs",
   "sections": "Combined transformations; Modulus function; Modulus equations & inequalities",
-  "level": "A",
-  "terms": [
-   "Spring Y12"
-  ]
+  "level": "A"
  },
  {
   "strand": "Pure",
@@ -204,10 +149,7 @@
   "ch_num": 4,
   "title": "Sequences and series",
   "sections": "General sequences; Sigma notation; Arithmetic sequences & series; Geometric sequences & series; Infinite geometric series; Problem solving",
-  "level": "A",
-  "terms": [
-   "Spring Y12"
-  ]
+  "level": "A"
  },
  {
   "strand": "Pure",
@@ -215,10 +157,7 @@
   "ch_num": 5,
   "title": "Rational functions and partial fractions",
   "sections": "Factor theorem review; Simplifying rational expressions; Distinct factors; Repeated factor",
-  "level": "A",
-  "terms": [
-   "Spring Y12"
-  ]
+  "level": "A"
  },
  {
   "strand": "Pure",
@@ -226,10 +165,7 @@
   "ch_num": 6,
   "title": "General binomial expansion",
   "sections": "General binomial expansion; Compound expressions",
-  "level": "A",
-  "terms": [
-   "Spring Y12"
-  ]
+  "level": "A"
  },
  {
   "strand": "Pure",
@@ -237,10 +173,7 @@
   "ch_num": 7,
   "title": "Radian measure",
   "sections": "Radians; Inverse trig & trig equations; Modelling with trig; Arcs & sectors; Triangles & circles; Small angle approximations",
-  "level": "A",
-  "terms": [
-   "Spring Y12"
-  ]
+  "level": "A"
  },
  {
   "strand": "Pure",
@@ -248,10 +181,7 @@
   "ch_num": 8,
   "title": "Further trigonometry",
   "sections": "Compound angle identities; Double angle identities; a sin x + b cos x; Reciprocal trig functions",
-  "level": "A",
-  "terms": [
-   "Spring Y12"
-  ]
+  "level": "A"
  },
  {
   "strand": "Pure",
@@ -259,10 +189,7 @@
   "ch_num": 9,
   "title": "Calculus of exponential and trig functions",
   "sections": "Differentiation; Integration",
-  "level": "A",
-  "terms": [
-   "Spring Y12"
-  ]
+  "level": "A"
  },
  {
   "strand": "Pure",
@@ -270,10 +197,7 @@
   "ch_num": 10,
   "title": "Further differentiation",
   "sections": "Chain rule; Product rule; Quotient rule; Implicit differentiation; Differentiating inverse functions",
-  "level": "A",
-  "terms": [
-   "Spring Y12"
-  ]
+  "level": "A"
  },
  {
   "strand": "Pure",
@@ -281,10 +205,7 @@
   "ch_num": 11,
   "title": "Further integration techniques",
   "sections": "Reversing standard derivatives; Substitution; By parts; Trig identities in integration; Rational functions",
-  "level": "A",
-  "terms": [
-   "Summer Y12"
-  ]
+  "level": "A"
  },
  {
   "strand": "Pure",
@@ -292,10 +213,7 @@
   "ch_num": 12,
   "title": "Further applications of calculus",
   "sections": "Properties of curves; Parametric equations; Related rates of change; More complicated areas",
-  "level": "A",
-  "terms": [
-   "Summer Y12"
-  ]
+  "level": "A"
  },
  {
   "strand": "Pure",
@@ -303,10 +221,7 @@
   "ch_num": 13,
   "title": "Differential equations",
   "sections": "Introduction; Separable DEs; Modelling with DEs",
-  "level": "A",
-  "terms": [
-   "Autumn Y13"
-  ]
+  "level": "A"
  },
  {
   "strand": "Pure",
@@ -314,10 +229,7 @@
   "ch_num": 14,
   "title": "Numerical solution of equations",
   "sections": "Locating roots; Newton–Raphson; Limitations of N–R; Fixed-point iteration; Limitations & rearrangements",
-  "level": "A",
-  "terms": [
-   "Summer Y12"
-  ]
+  "level": "A"
  },
  {
   "strand": "Pure",
@@ -325,10 +237,7 @@
   "ch_num": 15,
   "title": "Numerical integration",
   "sections": "Integration as limit of a sum; Trapezium rule",
-  "level": "A",
-  "terms": [
-   "Spring Y12"
-  ]
+  "level": "A"
  },
  {
   "strand": "Pure Core",
@@ -336,10 +245,7 @@
   "ch_num": 1,
   "title": "Matrices",
   "sections": "Add, subtract, scalar multiply; Matrix multiplication; Det & inverse 2×2; Det & inverse 3×3",
-  "level": "AS",
-  "terms": [
-   "Autumn Y12"
-  ]
+  "level": "AS"
  },
  {
   "strand": "Pure Core",
@@ -347,10 +253,7 @@
   "ch_num": 2,
   "title": "Further vectors",
   "sections": "Vector equation of a line; Cartesian equation; Intersections of lines; Angles & scalar product; Vector product",
-  "level": "AS",
-  "terms": [
-   "Autumn Y12"
-  ]
+  "level": "AS"
  },
  {
   "strand": "Pure Core",
@@ -358,10 +261,7 @@
   "ch_num": 3,
   "title": "Applications of matrices",
   "sections": "Linear simultaneous equations; Matrices as transformations; Further 2D transformations; Invariant points & lines; 3D transformations",
-  "level": "AS",
-  "terms": [
-   "Autumn Y12"
-  ]
+  "level": "AS"
  },
  {
   "strand": "Pure Core",
@@ -369,10 +269,7 @@
   "ch_num": 4,
   "title": "Complex numbers",
   "sections": "Arithmetic of i; Division & conjugates; Geometric representation; Modulus & argument; Loci; Mod-arg operations",
-  "level": "AS",
-  "terms": [
-   "Autumn Y12"
-  ]
+  "level": "AS"
  },
  {
   "strand": "Pure Core",
@@ -380,10 +277,7 @@
   "ch_num": 5,
   "title": "Roots of polynomials",
   "sections": "Factorising; Complex solutions; Roots & coefficients; Equation with given roots; Transforming equations",
-  "level": "AS",
-  "terms": [
-   "Autumn Y12"
-  ]
+  "level": "AS"
  },
  {
   "strand": "Pure Core",
@@ -391,10 +285,7 @@
   "ch_num": 6,
   "title": "Mathematical induction",
   "sections": "Principle of induction; Induction & matrices; Divisibility; Inequalities",
-  "level": "AS",
-  "terms": [
-   "Spring Y12"
-  ]
+  "level": "AS"
  },
  {
   "strand": "Pure Core",
@@ -402,10 +293,7 @@
   "ch_num": 1,
   "title": "Series and induction",
   "sections": "Review of induction; Induction & series; Standard series; Method of differences",
-  "level": "A",
-  "terms": [
-   "Summer Y12"
-  ]
+  "level": "A"
  },
  {
   "strand": "Pure Core",
@@ -413,10 +301,7 @@
   "ch_num": 2,
   "title": "Powers and roots of complex numbers",
   "sections": "De Moivre; Complex exponents; Roots of complex numbers; Roots of unity; Further factorising; Geometry of complex numbers",
-  "level": "A",
-  "terms": [
-   "Summer Y12"
-  ]
+  "level": "A"
  },
  {
   "strand": "Pure Core",
@@ -424,10 +309,7 @@
   "ch_num": 3,
   "title": "Complex numbers and trigonometry",
   "sections": "Multiple angle formulae; Polynomial equations; Powers of trig functions; Trig series",
-  "level": "A",
-  "terms": [
-   "Autumn Y13"
-  ]
+  "level": "A"
  },
  {
   "strand": "Pure Core",
@@ -435,10 +317,7 @@
   "ch_num": 4,
   "title": "Lines and planes in space",
   "sections": "Equation of a plane; Line–plane intersection; Angles between lines & planes; Distances",
-  "level": "A",
-  "terms": [
-   "Autumn Y13"
-  ]
+  "level": "A"
  },
  {
   "strand": "Pure Core",
@@ -446,10 +325,7 @@
   "ch_num": 5,
   "title": "Simultaneous equations and planes",
   "sections": "Linear simultaneous equations; Intersections of planes",
-  "level": "A",
-  "terms": [
-   "Autumn Y13"
-  ]
+  "level": "A"
  },
  {
   "strand": "Pure Core",
@@ -457,10 +333,7 @@
   "ch_num": 6,
   "title": "Hyperbolic functions",
   "sections": "Definitions; Inverse hyperbolics; Identities; Harder equations; Differentiation; Integration",
-  "level": "A",
-  "terms": [
-   "Autumn Y13"
-  ]
+  "level": "A"
  },
  {
   "strand": "Pure Core",
@@ -468,10 +341,7 @@
   "ch_num": 7,
   "title": "Further calculus techniques",
   "sections": "Differentiating inverse trig; Differentiating inverse hyperbolics; Integration using inverse trig/hyperbolics; Partial fractions in integration",
-  "level": "A",
-  "terms": [
-   "Autumn Y13"
-  ]
+  "level": "A"
  },
  {
   "strand": "Pure Core",
@@ -479,10 +349,7 @@
   "ch_num": 8,
   "title": "Applications of calculus",
   "sections": "Maclaurin series; Standard Maclaurin series; Improper integrals; Volumes of revolution; Mean value of a function",
-  "level": "A",
-  "terms": [
-   "Autumn Y13"
-  ]
+  "level": "A"
  },
  {
   "strand": "Pure Core",
@@ -490,10 +357,7 @@
   "ch_num": 9,
   "title": "Polar coordinates",
   "sections": "Polar curves; Features of polar curves; Polar ↔ Cartesian; Area enclosed; Area between curves",
-  "level": "A",
-  "terms": [
-   "Spring Y13"
-  ]
+  "level": "A"
  },
  {
   "strand": "Pure Core",
@@ -501,10 +365,7 @@
   "ch_num": 10,
   "title": "Differential equations",
   "sections": "Terminology; Integrating factor; Homogeneous 2nd order; Non-homogeneous 2nd order",
-  "level": "A",
-  "terms": [
-   "Autumn Y13"
-  ]
+  "level": "A"
  },
  {
   "strand": "Pure Core",
@@ -512,10 +373,7 @@
   "ch_num": 11,
   "title": "Applications of differential equations",
   "sections": "Forming DEs; Simple harmonic motion; Damping & damped oscillations; Linear systems",
-  "level": "A",
-  "terms": [
-   "Spring Y13"
-  ]
+  "level": "A"
  },
  {
   "strand": "Statistics",
@@ -523,10 +381,7 @@
   "ch_num": 16,
   "title": "Working with data",
   "sections": "Statistical diagrams; Standard deviation; Frequency tables; Scatter & correlation; Outliers & cleaning data",
-  "level": "AS",
-  "terms": [
-   "Autumn Y12"
-  ]
+  "level": "AS"
  },
  {
   "strand": "Statistics",
@@ -534,10 +389,7 @@
   "ch_num": 17,
   "title": "Probability",
   "sections": "Combining probabilities; Probability distributions; Binomial distribution",
-  "level": "AS",
-  "terms": [
-   "Autumn Y12"
-  ]
+  "level": "AS"
  },
  {
   "strand": "Statistics",
@@ -545,10 +397,7 @@
   "ch_num": 18,
   "title": "Statistical hypothesis testing",
   "sections": "Populations & samples; Intro to hypothesis testing; Critical regions",
-  "level": "AS",
-  "terms": [
-   "Autumn Y12"
-  ]
+  "level": "AS"
  },
  {
   "strand": "Statistics",
@@ -556,10 +405,7 @@
   "ch_num": 16,
   "title": "Conditional probability",
   "sections": "Set notation & Venn diagrams; Two-way tables; Tree diagrams; Modelling with probability",
-  "level": "A",
-  "terms": [
-   "Autumn Y12"
-  ]
+  "level": "A"
  },
  {
   "strand": "Statistics",
@@ -567,10 +413,7 @@
   "ch_num": 17,
   "title": "The normal distribution",
   "sections": "Normal probabilities; Inverse normal; Finding unknown μ or σ; Modelling with the normal",
-  "level": "A",
-  "terms": [
-   "Spring Y12"
-  ]
+  "level": "A"
  },
  {
   "strand": "Statistics",
@@ -578,10 +421,7 @@
   "ch_num": 18,
   "title": "Further hypothesis testing",
   "sections": "Distribution of sample mean; Tests for a mean; Tests for correlation coefficients",
-  "level": "A",
-  "terms": [
-   "Summer Y12"
-  ]
+  "level": "A"
  },
  {
   "strand": "Further Stats",
@@ -589,10 +429,7 @@
   "ch_num": 1,
   "title": "Counting principles and probability",
   "sections": "Product & addition principles; Permutations; Combinations; Exclusion principle; Order matters; Together or separated; Repetitions; Counting in probability",
-  "level": "AS",
-  "terms": [
-   "Summer Y12"
-  ]
+  "level": "AS"
  },
  {
   "strand": "Further Stats",
@@ -600,10 +437,7 @@
   "ch_num": 2,
   "title": "Discrete random variables",
   "sections": "Average & spread; E & Var of transformations; Discrete uniform; Binomial; Geometric",
-  "level": "AS",
-  "terms": [
-   "Summer Y12"
-  ]
+  "level": "AS"
  },
  {
   "strand": "Further Stats",
@@ -611,10 +445,7 @@
   "ch_num": 3,
   "title": "Poisson distribution",
   "sections": "Using the Poisson model",
-  "level": "AS",
-  "terms": [
-   "Autumn Y13"
-  ]
+  "level": "AS"
  },
  {
   "strand": "Further Stats",
@@ -622,10 +453,7 @@
   "ch_num": 4,
   "title": "Non-parametric hypothesis tests",
   "sections": "Sign test; Wilcoxon signed-rank; Matched pairs; Wilcoxon rank-sum; Normal approximations",
-  "level": "A",
-  "terms": [
-   "Autumn Y13"
-  ]
+  "level": "A"
  },
  {
   "strand": "Further Stats",
@@ -633,10 +461,7 @@
   "ch_num": 5,
   "title": "Correlation and regression",
   "sections": "Pearson's PMCC; Spearman's rank; Linear regression",
-  "level": "AS",
-  "terms": [
-   "Autumn Y13"
-  ]
+  "level": "AS"
  },
  {
   "strand": "Further Stats",
@@ -644,10 +469,7 @@
   "ch_num": 6,
   "title": "Chi-squared tests",
   "sections": "Contingency tables; Yates' correction; Goodness-of-fit",
-  "level": "AS",
-  "terms": [
-   "Autumn Y13"
-  ]
+  "level": "AS"
  },
  {
   "strand": "Further Stats",
@@ -655,10 +477,7 @@
   "ch_num": 7,
   "title": "Continuous distributions",
   "sections": "Continuous RVs; Averages & spread; E & Var of functions; CDFs; Piecewise PDFs; Continuous uniform; Exponential; Functions of a continuous RV; Goodness-of-fit (continuous)",
-  "level": "A",
-  "terms": [
-   "Autumn Y13"
-  ]
+  "level": "A"
  },
  {
   "strand": "Further Stats",
@@ -666,10 +485,7 @@
   "ch_num": 8,
   "title": "Combining random variables",
   "sections": "Adding independent RVs; E & Var of sample mean; Unbiased estimates; Linear combinations of normals; Means of large samples",
-  "level": "A",
-  "terms": [
-   "Spring Y13"
-  ]
+  "level": "A"
  },
  {
   "strand": "Further Stats",
@@ -677,10 +493,7 @@
   "ch_num": 9,
   "title": "Further hypothesis tests and confidence intervals",
   "sections": "Tests for mean of a large sample; Confidence intervals",
-  "level": "A",
-  "terms": [
-   "Spring Y13"
-  ]
+  "level": "A"
  },
  {
   "strand": "Mechanics",
@@ -688,10 +501,7 @@
   "ch_num": 19,
   "title": "Introduction to kinematics",
   "sections": "Models in mechanics; Displacement, velocity, acceleration; Kinematics & calculus; Travel graphs; Kinematics problems",
-  "level": "AS",
-  "terms": [
-   "Autumn Y12"
-  ]
+  "level": "AS"
  },
  {
   "strand": "Mechanics",
@@ -699,10 +509,7 @@
   "ch_num": 20,
   "title": "Motion with constant acceleration",
   "sections": "Deriving suvat; Using suvat; Vertical motion under gravity; Multi-stage problems",
-  "level": "AS",
-  "terms": [
-   "Autumn Y12"
-  ]
+  "level": "AS"
  },
  {
   "strand": "Mechanics",
@@ -710,10 +517,7 @@
   "ch_num": 21,
   "title": "Force and motion",
   "sections": "Newton's laws; Combining forces; Types of forces; Gravity & weight; Forces in equilibrium",
-  "level": "AS",
-  "terms": [
-   "Autumn Y12"
-  ]
+  "level": "AS"
  },
  {
   "strand": "Mechanics",
@@ -721,10 +525,7 @@
   "ch_num": 22,
   "title": "Objects in contact",
   "sections": "Newton's third law; Normal reaction; Further equilibrium; Connected particles; Pulleys",
-  "level": "AS",
-  "terms": [
-   "Autumn Y12"
-  ]
+  "level": "AS"
  },
  {
   "strand": "Mechanics",
@@ -732,10 +533,7 @@
   "ch_num": 19,
   "title": "Applications of vectors",
   "sections": "Motion in 2D; Constant acceleration equations; Calculus with vectors; Vectors in 3D; Geometrical problems",
-  "level": "A",
-  "terms": [
-   "Spring Y12"
-  ]
+  "level": "A"
  },
  {
   "strand": "Mechanics",
@@ -743,10 +541,7 @@
   "ch_num": 20,
   "title": "Projectiles",
   "sections": "Modelling projectile motion; Trajectory of a projectile",
-  "level": "A",
-  "terms": [
-   "Spring Y12"
-  ]
+  "level": "A"
  },
  {
   "strand": "Mechanics",
@@ -754,11 +549,7 @@
   "ch_num": 21,
   "title": "Forces in context",
   "sections": "Resolving forces; Coefficient of friction; Motion on a slope; Further equilibrium",
-  "level": "A",
-  "terms": [
-   "Autumn Y12",
-   "Spring Y12"
-  ]
+  "level": "A"
  },
  {
   "strand": "Mechanics",
@@ -766,10 +557,7 @@
   "ch_num": 22,
   "title": "Moments",
   "sections": "Turning effect of a force; Equilibrium; Non-uniform rods; Further equilibrium",
-  "level": "A",
-  "terms": [
-   "Spring Y12"
-  ]
+  "level": "A"
  },
  {
   "strand": "Further Mechanics",
@@ -777,10 +565,7 @@
   "ch_num": 1,
   "title": "Work, energy and power 1",
   "sections": "Work done by a force; KE & work–energy principle; PE & conservation of energy; Force at an angle; Power",
-  "level": "AS",
-  "terms": [
-   "Summer Y12"
-  ]
+  "level": "AS"
  },
  {
   "strand": "Further Mechanics",
@@ -788,10 +573,7 @@
   "ch_num": 2,
   "title": "Dimensional analysis",
   "sections": "Defining dimensions; Units of sums, differences & angles; Dimensions from units & predicting formulae; Summary",
-  "level": "AS",
-  "terms": [
-   "Summer Y12"
-  ]
+  "level": "AS"
  },
  {
   "strand": "Further Mechanics",
@@ -799,10 +581,7 @@
   "ch_num": 3,
   "title": "Momentum and collisions 1",
   "sections": "Momentum & impulse; Conservation of momentum; Restitution, KE & impulsive tension",
-  "level": "AS",
-  "terms": [
-   "Summer Y12"
-  ]
+  "level": "AS"
  },
  {
   "strand": "Further Mechanics",
@@ -810,10 +589,7 @@
   "ch_num": 4,
   "title": "Circular motion 1",
   "sections": "Linear vs angular speed; Acceleration in horizontal circles; Horizontal circle problems",
-  "level": "AS",
-  "terms": [
-   "Autumn Y13"
-  ]
+  "level": "AS"
  },
  {
   "strand": "Further Mechanics",
@@ -821,10 +597,7 @@
   "ch_num": 5,
   "title": "Centres of mass 1",
   "sections": "Systems of point masses; Standard shapes; Composite bodies",
-  "level": "A",
-  "terms": [
-   "Autumn Y13"
-  ]
+  "level": "A"
  },
  {
   "strand": "Further Mechanics",
@@ -832,10 +605,7 @@
   "ch_num": 6,
   "title": "Work, energy and power 2",
   "sections": "Variable force; Hooke's law & EPE; Problem solving; Vectors for work, KE & power",
-  "level": "A",
-  "terms": [
-   "Autumn Y13"
-  ]
+  "level": "A"
  },
  {
   "strand": "Further Mechanics",
@@ -843,10 +613,7 @@
   "ch_num": 7,
   "title": "Linear motion under variable force",
   "sections": "Acceleration, velocity & displacement; Variable force",
-  "level": "A",
-  "terms": [
-   "Autumn Y13"
-  ]
+  "level": "A"
  },
  {
   "strand": "Further Mechanics",
@@ -854,10 +621,7 @@
   "ch_num": 8,
   "title": "Momentum and collisions 2",
   "sections": "Variable force & vector notation; Oblique impacts & impulse–momentum triangle; Oblique collisions of spheres & impulsive tensions",
-  "level": "A",
-  "terms": [
-   "Autumn Y13"
-  ]
+  "level": "A"
  },
  {
   "strand": "Further Mechanics",
@@ -865,11 +629,7 @@
   "ch_num": 9,
   "title": "Circular motion 2",
   "sections": "Conservation of energy; Components of acceleration (A only); Problem solving (A only)",
-  "level": "AS/A",
-  "terms": [
-   "Autumn Y13",
-   "Spring Y13"
-  ]
+  "level": "AS/A"
  },
  {
   "strand": "Further Mechanics",
@@ -877,9 +637,6 @@
   "ch_num": 10,
   "title": "Centres of mass 2",
   "sections": "Centres of mass by integration; Equilibrium of a rigid body",
-  "level": "A",
-  "terms": [
-   "Spring Y13"
-  ]
+  "level": "A"
  }
 ]
