@@ -7,6 +7,7 @@
 --   * Row level security is ON with no policies, so the tables cannot be read or written
 --     directly with the public (anon/publishable) key.
 --   * The website can only call the functions below, and every one of them needs the code.
+--   * Photos/PDFs of questions are stored the same way (see "Question files" below).
 
 create schema if not exists extensions;
 create extension if not exists pgcrypto with schema extensions;
@@ -182,6 +183,196 @@ begin
 end
 $$;
 
+-- ---------------------------------------------------------------------------------------------
+-- Question files (photos and PDFs of questions and model solutions)
+--
+-- Files are stored in the database, split into chunks of up to 1 MB, and are only reachable
+-- through the functions below, which all need the tracker's code, just like the tracker itself.
+-- Limits: 10 MB per file, 100 MB per tracker, 350 MB for the whole site (so files can never
+-- fill the free database and stop trackers saving). Deleted files are kept for 14 days so a
+-- restored backup still has its files.
+
+create table if not exists public.tracker_files (
+  code_hash  text not null references public.trackers(code_hash) on delete cascade,
+  file_id    uuid not null,
+  name       text not null,
+  mime       text not null,
+  size       integer not null check (size > 0),
+  chunks     integer not null check (chunks between 1 and 12),
+  complete   boolean not null default false,
+  created_at timestamptz not null default now(),
+  deleted_at timestamptz,
+  primary key (code_hash, file_id)
+);
+
+create table if not exists public.tracker_file_chunks (
+  code_hash text not null,
+  file_id   uuid not null,
+  seq       integer not null,
+  data      bytea not null,
+  primary key (code_hash, file_id, seq),
+  foreign key (code_hash, file_id) references public.tracker_files (code_hash, file_id) on delete cascade
+);
+
+alter table public.tracker_files enable row level security;
+alter table public.tracker_file_chunks enable row level security;
+revoke all on public.tracker_files, public.tracker_file_chunks from anon, authenticated;
+
+-- Remove files deleted more than 14 days ago, and uploads that never finished.
+create or replace function public.rt_purge_files() returns void
+language sql security definer
+set search_path = public, extensions
+as $$
+  delete from public.tracker_files
+  where (deleted_at is not null and deleted_at < now() - interval '14 days')
+     or (not complete and created_at < now() - interval '1 day')
+$$;
+
+create or replace function public.rt_tracker_hash(p_code text) returns text
+language plpgsql stable security definer
+set search_path = public, extensions
+as $$
+declare
+  v_hash text := public.rt_hash(p_code);
+begin
+  if not exists (select 1 from public.trackers where code_hash = v_hash) then
+    raise exception 'tracker_not_found';
+  end if;
+  return v_hash;
+end
+$$;
+
+create or replace function public.rt_ids(p_ids jsonb) returns uuid[]
+language sql immutable
+as $$
+  select coalesce(array_agg(value::uuid), '{}') from jsonb_array_elements_text(coalesce(p_ids, '[]'::jsonb))
+$$;
+
+-- Upload one chunk (base64). Send chunks 0..p_chunks-1; the file becomes readable once all have
+-- arrived. Re-sending a chunk (e.g. after a dropped connection) is fine.
+create or replace function public.put_file_chunk(p_code text, p_file_id text, p_seq integer, p_chunks integer,
+                                                 p_name text, p_mime text, p_size integer, p_data text) returns jsonb
+language plpgsql security definer
+set search_path = public, extensions
+as $$
+declare
+  v_hash text := public.rt_tracker_hash(p_code);
+  v_id uuid := p_file_id::uuid;
+  v_bytes bytea;
+  v_file public.tracker_files%rowtype;
+  v_have integer;
+  v_total bigint;
+begin
+  if p_mime not in ('image/jpeg', 'image/png', 'image/webp', 'image/gif', 'image/heic', 'image/heif', 'application/pdf') then
+    raise exception 'That type of file isn''t supported: use a photo (JPEG/PNG) or a PDF.';
+  end if;
+  if p_size is null or p_size <= 0 or p_size > 10485760 then
+    raise exception 'Files can be at most 10 MB.';
+  end if;
+  if p_chunks is null or p_chunks < 1 or p_chunks > 12 or p_seq is null or p_seq < 0 or p_seq >= p_chunks then
+    raise exception 'invalid_chunk';
+  end if;
+  v_bytes := decode(p_data, 'base64');
+  if length(v_bytes) = 0 or length(v_bytes) > 1048576 then
+    raise exception 'invalid_chunk';
+  end if;
+  select * into v_file from public.tracker_files where code_hash = v_hash and file_id = v_id for update;
+  if not found then
+    perform public.rt_purge_files();
+    if (select coalesce(sum(size), 0) from public.tracker_files where code_hash = v_hash and deleted_at is null) + p_size > 104857600 then
+      raise exception 'Your file storage is full (100 MB). Delete some questions to make room.';
+    end if;
+    if (select coalesce(sum(size), 0) from public.tracker_files) + p_size > 367001600 then
+      raise exception 'The site''s file storage is full, so no more files can be uploaded.';
+    end if;
+    insert into public.tracker_files (code_hash, file_id, name, mime, size, chunks)
+      values (v_hash, v_id, left(coalesce(nullif(p_name, ''), 'file'), 200), p_mime, p_size, p_chunks);
+  elsif v_file.complete or v_file.deleted_at is not null then
+    raise exception 'file_exists';
+  elsif v_file.size <> p_size or v_file.chunks <> p_chunks or v_file.mime <> p_mime then
+    raise exception 'invalid_chunk';
+  end if;
+  insert into public.tracker_file_chunks (code_hash, file_id, seq, data) values (v_hash, v_id, p_seq, v_bytes)
+    on conflict (code_hash, file_id, seq) do update set data = excluded.data;
+  select count(*), coalesce(sum(length(data)), 0) into v_have, v_total
+    from public.tracker_file_chunks where code_hash = v_hash and file_id = v_id;
+  if v_have = p_chunks then
+    if v_total <> p_size then
+      raise exception 'size_mismatch';
+    end if;
+    update public.tracker_files set complete = true where code_hash = v_hash and file_id = v_id;
+  end if;
+  return jsonb_build_object('complete', v_have = p_chunks, 'received', v_have);
+end
+$$;
+
+-- One chunk of a finished file, as base64, with the file's details; null if there's no such file.
+create or replace function public.get_file_chunk(p_code text, p_file_id text, p_seq integer) returns jsonb
+language sql stable security definer
+set search_path = public, extensions
+as $$
+  select jsonb_build_object('name', f.name, 'mime', f.mime, 'size', f.size, 'chunks', f.chunks,
+                            'data', translate(encode(c.data, 'base64'), E'\n', ''))
+  from public.tracker_files f
+  join public.tracker_file_chunks c on c.code_hash = f.code_hash and c.file_id = f.file_id and c.seq = p_seq
+  where f.code_hash = public.rt_hash(p_code) and f.file_id = p_file_id::uuid and f.complete
+$$;
+
+-- Several small single-chunk files at once (thumbnails): {"<id>": {"mime": ..., "data": base64}}.
+create or replace function public.get_small_files(p_code text, p_file_ids jsonb) returns jsonb
+language sql stable security definer
+set search_path = public, extensions
+as $$
+  select coalesce(jsonb_object_agg(f.file_id::text,
+           jsonb_build_object('mime', f.mime, 'data', translate(encode(c.data, 'base64'), E'\n', ''))), '{}'::jsonb)
+  from public.tracker_files f
+  join public.tracker_file_chunks c on c.code_hash = f.code_hash and c.file_id = f.file_id and c.seq = 0
+  where f.code_hash = public.rt_hash(p_code) and f.complete and f.chunks = 1 and f.size <= 262144
+    and f.file_id = any ((public.rt_ids(p_file_ids))[1:100])
+$$;
+
+-- Delete files (kept for 14 days in case a backup is restored). Returns how many were deleted.
+create or replace function public.delete_files(p_code text, p_file_ids jsonb) returns integer
+language plpgsql security definer
+set search_path = public, extensions
+as $$
+declare
+  v_n integer;
+begin
+  update public.tracker_files set deleted_at = now()
+    where code_hash = public.rt_tracker_hash(p_code) and file_id = any (public.rt_ids(p_file_ids)) and deleted_at is null;
+  get diagnostics v_n = row_count;
+  perform public.rt_purge_files();
+  return v_n;
+end
+$$;
+
+-- Bring back deleted files (after restoring a backup that still uses them).
+create or replace function public.undelete_files(p_code text, p_file_ids jsonb) returns integer
+language plpgsql security definer
+set search_path = public, extensions
+as $$
+declare
+  v_n integer;
+begin
+  update public.tracker_files set deleted_at = null
+    where code_hash = public.rt_tracker_hash(p_code) and file_id = any (public.rt_ids(p_file_ids)) and deleted_at is not null;
+  get diagnostics v_n = row_count;
+  return v_n;
+end
+$$;
+
+-- Every file this tracker has (for storage use and tidying up).
+create or replace function public.list_files(p_code text) returns jsonb
+language sql stable security definer
+set search_path = public, extensions
+as $$
+  select coalesce(jsonb_agg(jsonb_build_object('file_id', file_id, 'name', name, 'mime', mime, 'size', size,
+                                               'complete', complete, 'created_at', created_at, 'deleted_at', deleted_at)
+                            order by created_at), '[]'::jsonb)
+  from public.tracker_files where code_hash = public.rt_tracker_hash(p_code)
+$$;
+
 revoke all on function public.rt_check(jsonb) from public, anon, authenticated;
 grant execute on function public.create_tracker(jsonb) to anon, authenticated;
 grant execute on function public.load_tracker(text) to anon, authenticated;
@@ -189,3 +380,11 @@ grant execute on function public.save_tracker(text, jsonb, integer) to anon, aut
 grant execute on function public.list_backups(text) to anon, authenticated;
 grant execute on function public.backup_tracker(text) to anon, authenticated;
 grant execute on function public.restore_backup(text, bigint) to anon, authenticated;
+revoke all on function public.rt_purge_files() from public, anon, authenticated;
+revoke all on function public.rt_tracker_hash(text) from public, anon, authenticated;
+grant execute on function public.put_file_chunk(text, text, integer, integer, text, text, integer, text) to anon, authenticated;
+grant execute on function public.get_file_chunk(text, text, integer) to anon, authenticated;
+grant execute on function public.get_small_files(text, jsonb) to anon, authenticated;
+grant execute on function public.delete_files(text, jsonb) to anon, authenticated;
+grant execute on function public.undelete_files(text, jsonb) to anon, authenticated;
+grant execute on function public.list_files(text) to anon, authenticated;

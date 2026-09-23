@@ -71,8 +71,13 @@ describe("chapters", () => {
       [T, true, 3, "2027-01-24", null, false]);
     assert.throws(() => S.markLearnt(d, "12", 3, T), /Already marked/);
     assert.throws(() => S.markLearnt(d, "13", 9, T), /Confidence/);
+    // learnt on an earlier day: the first review counts from that day
+    S.markLearnt(d, "14", 2, T, "2027-01-01");
+    assert.deepEqual([ch(d, "14").first_learnt, ch(d, "14").next_review, ch(d, "14").due], ["2027-01-01", "2027-01-08", true]);
+    assert.throws(() => S.markLearnt(d, "15", 2, T, "2027-02-01"), /future/);
+    assert.throws(() => S.markLearnt(d, "15", 2, T, "soon"), /must be a date/);
     assert.equal(ch(d, "12", "2027-01-24").due, true);
-    assert.equal(S.dueList(d, "2027-01-24").chapters[0].id, "12");
+    assert.ok(S.dueList(d, "2027-01-24").chapters.some((c) => c.id === "12"));
   });
 
   test("back-filling a first-learnt date", () => {
@@ -88,8 +93,9 @@ describe("chapters", () => {
     assert.equal(ch(d, "7").learnt, false);
     S.reviewChapter(d, "6", 4, "", T);
     assert.throws(() => S.updateChapter(d, "6", { first_learnt: null }, T), /already reviewed/);
-    S.updateChapter(d, "6", { first_learnt: T }, T);
-    assert.throws(() => S.updateChapter(d, "6", { first_learnt: "2027-01-11" }, "2027-01-12"), /before your first review/);
+    // any past date can be chosen, even after the first review
+    S.updateChapter(d, "6", { first_learnt: "2027-01-11" }, "2027-01-12");
+    assert.equal(ch(d, "6", "2027-01-12").first_learnt, "2027-01-11");
   });
 });
 
@@ -267,5 +273,93 @@ describe("import", () => {
     assert.equal(S.getChapter(d, "1", T).confidence, 4);
     assert.throws(() => S.replaceTable(d, "nope", []), /Unknown table/);
     assert.throws(() => S.replaceTable(d, "chapters", []), /empty/);
+  });
+});
+
+describe("question bank", () => {
+  const img = (id, extra = {}) => ({ id, name: `${id}.jpg`, mime: "image/jpeg", size: 1234, thumb_id: `${id}-t`, ...extra });
+  const pdf = (id) => ({ id, name: `${id}.pdf`, mime: "application/pdf", size: 99999 });
+
+  test("add a question with files and a model solution to a chapter", () => {
+    const d = fresh();
+    S.createBankQuestion(d, { chapter_id: "38", title: "Ex 2C Q7", source: "Textbook", status: "wrong",
+      files: [img("f1"), pdf("f2")], solution_files: [img("s1")], solution_text: "Use de Moivre" }, T, { id: "q1" });
+    const [q] = S.listBank(d);
+    assert.deepEqual([q.id, q.chapter_title, q.title, q.status, q.added_on, q.files.length, q.has_solution],
+      ["q1", "Powers and roots of complex numbers", "Ex 2C Q7", "wrong", T, 2, true]);
+    assert.equal(S.getChapter(d, "38", T).question_count, 1);
+    assert.deepEqual([...S.referencedFileIds(d)].sort(), ["f1", "f1-t", "f2", "s1", "s1-t"]);
+    assert.deepEqual(S.questionFileIds(d.questions[0]).sort(), ["f1", "f1-t", "f2", "s1", "s1-t"]);
+  });
+
+  test("validation", () => {
+    const d = fresh();
+    assert.throws(() => S.createBankQuestion(d, { chapter_id: "999", files: [img("a")] }, T), /Pick the chapter/);
+    assert.throws(() => S.createBankQuestion(d, { chapter_id: "1", files: [] }, T), /at least one photo or PDF/);
+    assert.throws(() => S.createBankQuestion(d, { chapter_id: "1", files: [{ name: "x" }] }, T), /needs an id/);
+    assert.throws(() => S.createBankQuestion(d, { chapter_id: "1", status: "meh", files: [img("a")] }, T), /Status/);
+  });
+
+  test("edit, add and remove files, move to another chapter", () => {
+    const d = fresh();
+    S.createBankQuestion(d, { chapter_id: "4", files: [img("f1")] }, T, { id: "q" });
+    S.updateBankQuestion(d, "q", { title: "Factor theorem", status: "right", notes: "careful with signs", solution_text: "f(2)=0" });
+    S.addBankFiles(d, "q", "solution", [pdf("s1")]);
+    S.addBankFiles(d, "q", "question", [img("f2")]);
+    let q = S.getBankQuestion(d, "q", T);
+    assert.deepEqual([q.title, q.status, q.notes, q.files.length, q.solution_files.length], ["Factor theorem", "right", "careful with signs", 2, 1]);
+    S.removeBankFile(d, "q", "f1");
+    S.removeBankFile(d, "q", "s1");
+    assert.throws(() => S.removeBankFile(d, "q", "f2"), /at least one file/);
+    assert.throws(() => S.addBankFiles(d, "q", "answers", [pdf("x")]), /role/);
+    S.createMistake(d, { chapter_id: "4", what_wrong: "sign", question_id: "q" }, T, { id: "m" });
+    S.updateBankQuestion(d, "q", { chapter_id: "5" });
+    assert.equal(d.mistakes[0].chapter_id, "5"); // linked mistakes follow the question
+    q = S.getBankQuestion(d, "q", T);
+    assert.deepEqual([q.files.map((f) => f.id), q.solution_files.length, q.chapter_title], [["f2"], 0, "Using graphs"]);
+  });
+
+  test("mistakes attached to a question", () => {
+    const d = fresh();
+    S.createBankQuestion(d, { chapter_id: "20", title: "Q3", files: [img("f")] }, T, { id: "q" });
+    // logging a mistake from the question fills in its chapter
+    S.createMistake(d, { question_id: "q", what_wrong: "forgot +c", correct_method: "always add +c" }, T, { id: "m1" });
+    S.createMistake(d, { chapter_id: "20", what_wrong: "separate one" }, T, { id: "m2" });
+    S.linkMistake(d, "q", "m2");
+    let q = S.getBankQuestion(d, "q", T);
+    assert.deepEqual([q.mistake_count, q.open_mistakes, q.mistakes.map((m) => m.id).sort()], [2, 2, ["m1", "m2"]]);
+    assert.equal(d.mistakes.find((m) => m.id === "m1").chapter_id, "20");
+    assert.equal(S.listMistakes(d, T).find((m) => m.id === "m1").question_title, "Q3");
+    S.retestMistake(d, "m1", true, T);
+    assert.equal(S.getBankQuestion(d, "q", T).open_mistakes, 1);
+    // due retests say which question to redo
+    const retest = S.dueList(d, "2027-01-17").retests.find((m) => m.id === "m2");
+    assert.deepEqual([retest.question_id, retest.question_title], ["q", "Q3"]);
+    S.unlinkMistake(d, "m2");
+    assert.equal(S.getBankQuestion(d, "q", T).mistake_count, 1);
+    assert.throws(() => S.createMistake(d, { question_id: "nope", what_wrong: "x" }, T), /Question not found/);
+    // deleting the question keeps the mistakes but unlinks them
+    S.deleteBankQuestion(d, "q");
+    assert.deepEqual([d.questions.length, d.mistakes.length, d.mistakes[0].question_id], [0, 2, null]);
+  });
+
+  test("questions survive JSON and CSV round trips; old trackers without questions still load", async () => {
+    const { docToCSVs, parseCSV } = await import("../../web/js/files.js");
+    const d = fresh();
+    S.createBankQuestion(d, { chapter_id: "2", title: 'Surds, "rationalise"', files: [img("f1")], solution_files: [pdf("s1")] }, T, { id: "q" });
+    S.createMistake(d, { question_id: "q", what_wrong: "w" }, T, { id: "m" });
+    assert.deepEqual(S.normalize(JSON.parse(JSON.stringify(d))), d);
+    const csv = docToCSVs(d);
+    const copy = fresh();
+    S.replaceTable(copy, "questions", parseCSV(csv["questions.csv"]));
+    S.replaceTable(copy, "mistakes", parseCSV(csv["mistakes.csv"]));
+    assert.deepEqual(copy.questions, d.questions);
+    assert.equal(copy.mistakes[0].question_id, "q");
+    const old = fresh();
+    delete old.questions;
+    assert.deepEqual(S.normalize(old).questions, []);
+    const broken = fresh();
+    broken.questions = [{ id: "x", chapter_id: "999", files: [] }];
+    assert.throws(() => S.normalize(broken), /pointing at chapters/);
   });
 });

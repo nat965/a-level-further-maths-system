@@ -6,7 +6,9 @@ import * as L from "./logic.js";
 
 export const FORMAT = "revision-tracker";
 export const DOC_VERSION = 2;
-export const TABLES = ["chapters", "reviews", "papers", "paper_questions", "boundaries", "mistakes"];
+export const TABLES = ["chapters", "reviews", "papers", "paper_questions", "boundaries", "mistakes", "questions"];
+// How a question in the question bank went.
+export const BANK_STATUSES = ["not_tried", "wrong", "partly", "right"];
 const STATUS_FIELDS = ["summary_status", "exercises_status", "examq_status"];
 export const BOUNDARY_COLS = { "A*": "a_star", A: "a", B: "b", C: "c", D: "d", E: "e" };
 
@@ -29,7 +31,7 @@ export function newTracker(seed) {
       summary_status: "not_started", exercises_status: "not_started", examq_status: "not_started",
       confidence: null, first_learnt: null, notes: "", sort_order: i + 1,
     })),
-    reviews: [], papers: [], paper_questions: [], boundaries: [], mistakes: [], settings: {},
+    reviews: [], papers: [], paper_questions: [], boundaries: [], mistakes: [], questions: [], settings: {},
   };
 }
 
@@ -72,7 +74,13 @@ export function normalize(raw) {
       id: String(m.id), logged_on: String(m.logged_on).slice(0, 10), chapter_id: str(m.chapter_id),
       source: String(m.source || ""), what_wrong: String(m.what_wrong || ""), correct_method: String(m.correct_method || ""),
       retest_on: str(m.retest_on), retest_passed: [true, 1, "1", "true", "TRUE", "True"].includes(m.retest_passed),
-      passed_on: str(m.passed_on),
+      passed_on: str(m.passed_on), question_id: str(m.question_id),
+    })),
+    questions: rows("questions").map((q) => ({
+      id: String(q.id), chapter_id: String(q.chapter_id), title: String(q.title || ""), source: String(q.source || ""),
+      added_on: String(q.added_on || "").slice(0, 10), status: BANK_STATUSES.includes(q.status) ? q.status : "not_tried",
+      notes: String(q.notes || ""), files: fileList(q.files), solution_files: fileList(q.solution_files),
+      solution_text: String(q.solution_text || ""),
     })),
     settings: {},
   };
@@ -95,6 +103,17 @@ export function normalize(raw) {
   return doc;
 }
 
+// File details kept in the tracker; the file itself lives in the database's file store.
+function fileList(v) {
+  let list = v;
+  if (typeof list === "string") { try { list = list ? JSON.parse(list) : []; } catch { list = []; } }
+  if (!Array.isArray(list)) return [];
+  return list.filter((f) => f && f.id).map((f) => ({
+    id: String(f.id), name: String(f.name || "file"), mime: String(f.mime || ""), size: Number(f.size) || 0,
+    thumb_id: f.thumb_id ? String(f.thumb_id) : null,
+  }));
+}
+
 function checkReferences(doc) {
   const ch = new Set(doc.chapters.map((c) => c.id));
   const pp = new Set(doc.papers.map((p) => p.id));
@@ -102,6 +121,9 @@ function checkReferences(doc) {
   bad += doc.reviews.filter((r) => !ch.has(r.chapter_id)).length;
   bad += doc.paper_questions.filter((q) => !pp.has(q.paper_id) || (q.chapter_id !== null && !ch.has(q.chapter_id))).length;
   bad += doc.mistakes.filter((m) => m.chapter_id !== null && !ch.has(m.chapter_id)).length;
+  const qq = new Set(doc.questions.map((q) => q.id));
+  bad += doc.questions.filter((q) => !ch.has(q.chapter_id)).length;
+  bad += doc.mistakes.filter((m) => m.question_id !== null && !qq.has(m.question_id)).length;
   for (const t of TABLES) if (new Set(doc[t].map((x) => x.id)).size !== doc[t].length) fail(`Duplicate ids in ${t}`);
   if (bad) fail(`That file has ${bad} rows pointing at chapters or papers that don't exist.`);
 }
@@ -142,9 +164,12 @@ export function listChapters(doc, today) {
     if (!e.last || r.reviewed_on > e.last) e.last = r.reviewed_on;
   }
   const { lost, top } = lossStats(doc);
+  const qCount = {};
+  for (const q of doc.questions || []) qCount[q.chapter_id] = (qCount[q.chapter_id] || 0) + 1;
   return [...doc.chapters]
     .sort((a, b) => a.sort_order - b.sort_order)
-    .map((c) => enrich(c, last[c.id] || { last: null, n: 0 }, lost[c.id] || 0, top[c.id] || null, settings, today));
+    .map((c) => ({ ...enrich(c, last[c.id] || { last: null, n: 0 }, lost[c.id] || 0, top[c.id] || null, settings, today),
+                   question_count: qCount[c.id] || 0 }));
 }
 
 function enrich(c, rv, marksLost, topError, settings, today) {
@@ -200,7 +225,6 @@ function checkFirstLearnt(doc, chapterId, value, today) {
   let d;
   try { d = L.parseDate(value); } catch { fail("First learnt must be a date"); }
   if (d > today) fail("First learnt can't be in the future");
-  if (firstReview && d > firstReview) fail(`First learnt must be on or before your first review (${firstReview})`);
   return d;
 }
 
@@ -228,11 +252,15 @@ export function updateChapter(doc, id, data, today) {
 const checkConfidence = (v) => { if (!(Number.isInteger(v) && v >= 1 && v <= 5)) fail("Confidence must be 1-5"); };
 
 // "Learnt today": today is the day you first learnt it; the confidence schedules the first review.
-export function markLearnt(doc, id, confidence, today) {
+export function markLearnt(doc, id, confidence, today, on = today) {
   checkConfidence(confidence);
   const c = chapterOrFail(doc, id);
   if (c.first_learnt) fail(`Already marked as learnt on ${c.first_learnt}`);
-  c.first_learnt = today;
+  let d;
+  try { d = L.parseDate(on); } catch { fail("Learnt on must be a date"); }
+  if (!d) fail("Learnt on must be a date");
+  if (d > today) fail("Learnt on can't be in the future");
+  c.first_learnt = d;
   c.confidence = confidence;
   return doc;
 }
@@ -269,7 +297,7 @@ export function dueList(doc, today) {
     .filter((m) => !m.retest_passed && m.retest_on && m.retest_on <= today)
     .sort((a, b) => a.retest_on.localeCompare(b.retest_on))
     .map((m) => ({ ...m, chapter_title: titles[m.chapter_id]?.title || null, chapter_strand: titles[m.chapter_id]?.strand || null,
-                   days_overdue: L.daysBetween(m.retest_on, today) }));
+                   question_title: questionTitle(doc, m.question_id), days_overdue: L.daysBetween(m.retest_on, today) }));
   const upcoming = all.filter((c) => !c.due && c.days_until_review !== null && c.days_until_review <= 7)
     .sort((a, b) => a.days_until_review - b.days_until_review).slice(0, 10);
   const nextUp = new Map();
@@ -467,11 +495,21 @@ export function listMistakes(doc, today) {
   return [...doc.mistakes]
     .sort((a, b) => (a.logged_on < b.logged_on ? 1 : a.logged_on > b.logged_on ? -1 : 0))
     .map((m) => ({ ...m, chapter_title: ch[m.chapter_id]?.title || null, chapter_strand: ch[m.chapter_id]?.strand || null,
+                   question_title: questionTitle(doc, m.question_id),
                    retest_due: Boolean(!m.retest_passed && m.retest_on && m.retest_on <= today) }));
 }
 
 function mistakeFields(doc, data, today, partial) {
   const f = {};
+  if ("question_id" in data) {
+    if (data.question_id) {
+      const q = byId(doc.questions, data.question_id) || fail("Question not found");
+      f.question_id = q.id;
+      if (!data.chapter_id) data = { ...data, chapter_id: q.chapter_id };
+    } else {
+      f.question_id = null;
+    }
+  }
   if ("chapter_id" in data || !partial) {
     if (!data.chapter_id || !byId(doc.chapters, data.chapter_id)) fail("Pick a chapter");
     f.chapter_id = String(data.chapter_id);
@@ -490,7 +528,7 @@ function mistakeFields(doc, data, today, partial) {
 
 export function createMistake(doc, data, today, { id = newId() } = {}) {
   const f = mistakeFields(doc, data, today, false);
-  doc.mistakes.push({ id, logged_on: today, source: "", correct_method: "", retest_passed: false, passed_on: null, ...f });
+  doc.mistakes.push({ id, logged_on: today, source: "", correct_method: "", retest_passed: false, passed_on: null, question_id: null, ...f });
   return doc;
 }
 
@@ -515,6 +553,128 @@ export function deleteMistake(doc, id) {
   doc.mistakes = doc.mistakes.filter((m) => m.id !== String(id));
   return doc;
 }
+
+// ---------------------------------------------------------------- question bank
+
+function questionTitle(doc, id) {
+  if (!id) return null;
+  const q = (doc.questions || []).find((x) => x.id === id);
+  return q ? q.title || "Untitled question" : null;
+}
+
+const questionOrFail = (doc, id) => byId(doc.questions, id) || fail("Question not found");
+
+function checkFiles(files, what) {
+  if (!Array.isArray(files)) fail(`${what} must be a list of files`);
+  return files.map((f) => {
+    if (!f || !f.id || !f.mime || !(Number(f.size) > 0)) fail(`${what}: each file needs an id, type and size`);
+    return { id: String(f.id), name: String(f.name || "file").slice(0, 200), mime: String(f.mime), size: Number(f.size),
+             thumb_id: f.thumb_id ? String(f.thumb_id) : null };
+  });
+}
+
+function bankFields(doc, data, partial) {
+  const f = {};
+  if ("chapter_id" in data || !partial) {
+    if (!data.chapter_id || !byId(doc.chapters, data.chapter_id)) fail("Pick the chapter this question is on");
+    f.chapter_id = String(data.chapter_id);
+  }
+  for (const k of ["title", "source", "notes", "solution_text"]) if (k in data) f[k] = String(data[k] ?? "").slice(0, 20000);
+  if ("status" in data || !partial) {
+    const st = data.status ?? "not_tried";
+    if (!BANK_STATUSES.includes(st)) fail(`Status must be one of ${BANK_STATUSES.join(", ")}`);
+    f.status = st;
+  }
+  return f;
+}
+
+export function listBank(doc) {
+  const ch = Object.fromEntries(doc.chapters.map((c) => [c.id, c]));
+  return [...(doc.questions || [])]
+    .sort((a, b) => (a.added_on < b.added_on ? 1 : a.added_on > b.added_on ? -1 : 0) || a.title.localeCompare(b.title))
+    .map((q) => {
+      const ms = doc.mistakes.filter((m) => m.question_id === q.id);
+      const c = ch[q.chapter_id] || {};
+      return { ...q, chapter_title: c.title || null, chapter_strand: c.strand || null, book: c.book || null, ch_num: c.ch_num ?? null,
+               sort_order: c.sort_order ?? 0, mistake_count: ms.length, open_mistakes: ms.filter((m) => !m.retest_passed).length,
+               has_solution: Boolean(q.solution_files.length || q.solution_text.trim()) };
+    });
+}
+
+export function getBankQuestion(doc, id, today) {
+  const q = listBank(doc).find((x) => x.id === String(id)) || fail("Question not found");
+  return { ...q, mistakes: listMistakes(doc, today).filter((m) => m.question_id === q.id) };
+}
+
+// Add an uploaded question (its files must already be in the file store) to a chapter's bank.
+export function createBankQuestion(doc, data, today, { id = newId() } = {}) {
+  const f = bankFields(doc, data, false);
+  const files = checkFiles(data.files || [], "Question files");
+  if (!files.length) fail("Add at least one photo or PDF of the question");
+  doc.questions ||= [];
+  doc.questions.push({ id, title: "", source: "", notes: "", solution_text: "", ...f, added_on: today, files,
+                       solution_files: checkFiles(data.solution_files || [], "Solution files") });
+  return doc;
+}
+
+export function updateBankQuestion(doc, id, data) {
+  const q = questionOrFail(doc, id);
+  const f = bankFields(doc, data, true);
+  if (!Object.keys(f).length) fail("Nothing to update");
+  Object.assign(q, f);
+  if (f.chapter_id) for (const m of doc.mistakes) if (m.question_id === q.id) m.chapter_id = f.chapter_id;
+  return doc;
+}
+
+// role: "question" or "solution"
+export function addBankFiles(doc, id, role, files) {
+  const q = questionOrFail(doc, id);
+  const key = role === "solution" ? "solution_files" : role === "question" ? "files" : fail("role must be question or solution");
+  const add = checkFiles(files, "Files");
+  if (!add.length) fail("No files to add");
+  q[key] = [...q[key], ...add];
+  return doc;
+}
+
+export function removeBankFile(doc, id, fileId) {
+  const q = questionOrFail(doc, id);
+  const inQ = q.files.some((f) => f.id === fileId);
+  if (inQ && q.files.length === 1) fail("A question needs at least one file: delete the whole question instead");
+  if (!inQ && !q.solution_files.some((f) => f.id === fileId)) fail("File not found");
+  q.files = q.files.filter((f) => f.id !== fileId);
+  q.solution_files = q.solution_files.filter((f) => f.id !== fileId);
+  return doc;
+}
+
+export function deleteBankQuestion(doc, id) {
+  questionOrFail(doc, id);
+  doc.questions = doc.questions.filter((q) => q.id !== String(id));
+  for (const m of doc.mistakes) if (m.question_id === String(id)) m.question_id = null;
+  return doc;
+}
+
+export function linkMistake(doc, questionId, mistakeId) {
+  const q = questionOrFail(doc, questionId);
+  const m = byId(doc.mistakes, mistakeId) || fail("Mistake not found");
+  m.question_id = q.id;
+  return doc;
+}
+
+export function unlinkMistake(doc, mistakeId) {
+  (byId(doc.mistakes, mistakeId) || fail("Mistake not found")).question_id = null;
+  return doc;
+}
+
+// Every file id (and thumbnail id) the tracker refers to.
+export function referencedFileIds(doc) {
+  const ids = new Set();
+  for (const q of doc.questions || []) {
+    for (const f of [...q.files, ...q.solution_files]) { ids.add(f.id); if (f.thumb_id) ids.add(f.thumb_id); }
+  }
+  return ids;
+}
+
+export const questionFileIds = (q) => [...q.files, ...q.solution_files].flatMap((f) => (f.thumb_id ? [f.id, f.thumb_id] : [f.id]));
 
 // ---------------------------------------------------------------- settings
 

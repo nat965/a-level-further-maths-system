@@ -54,7 +54,8 @@ const COLUMNS = {
   papers: ["id", "paper_code", "series", "sat_on", "mark", "max_mark", "time_taken_min", "notes"],
   paper_questions: ["id", "paper_id", "q_num", "chapter_id", "marks_lost", "error_type", "fix"],
   boundaries: ["id", "paper_code", "series", "a_star", "a", "b", "c", "d", "e"],
-  mistakes: ["id", "logged_on", "chapter_id", "source", "what_wrong", "correct_method", "retest_on", "retest_passed", "passed_on"],
+  mistakes: ["id", "logged_on", "chapter_id", "source", "what_wrong", "correct_method", "retest_on", "retest_passed", "passed_on", "question_id"],
+  questions: ["id", "chapter_id", "title", "source", "added_on", "status", "notes", "files", "solution_files", "solution_text"],
 };
 
 // ---------------------------------------------------------------- zip (stored, no compression)

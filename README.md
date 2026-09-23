@@ -1,6 +1,6 @@
 # Revision Tracker
 
-A revision tracker website for **OCR A-level Maths (H240)** and **OCR A Further Maths (H245: Further Statistics + Further Mechanics)**. It covers spaced repetition, past papers, question-level analysis and a mistakes log.
+A revision tracker website for **OCR A-level Maths (H240)** and **OCR A Further Maths (H245: Further Statistics + Further Mechanics)**. It covers spaced repetition, past papers, question-level analysis, a mistakes log and a **question bank** of photos/PDFs of questions you've done.
 
 - **Open it anywhere** (laptop, phone, school computer) at the site's address. Type in your code and you're in your own tracker.
 - **Everyone gets their own tracker.** Press *Start a new tracker* to get a new code. Each tracker starts with the same 80 chapters and is completely separate from everyone else's.
@@ -38,13 +38,16 @@ If you lose your connection, keep the tab open: your changes save when you're ba
 | Page | What it's for |
 |---|---|
 | **Due today** (home) | Chapters whose review date has arrived, plus mistake retests that are due, sorted by **priority**. Below that, **Next to learn** shows the first chapter you haven't learnt yet in each book. |
-| **Chapters** | All 80 chapters. Filter by strand, book or status (e.g. learnt / not learnt yet); search; click any column header to sort. Set Summary / Exercises / Exam Qs status and confidence inline. Click a title for its **history timeline** and to set or change its **first learnt** date. |
+| **Chapters** | All 80 chapters. Filter by strand, book or status (e.g. learnt / not learnt yet); search; click any column header to sort. Set Summary / Exercises / Exam Qs status, confidence and the **first learnt** date inline. Click a title for its **history timeline** and the chapter's **question bank**. |
 | **Dashboard** | Progress by strand and by book, your **learning pace** (ahead or behind), top 10 weakest chapters, review streak and reviews this week, paper averages vs A*, and exam countdown. |
 | **Past papers** | Log attempts (paper, series, date, mark, time) and the **questions you dropped marks on** (chapter, marks lost, error type, fix). Shows a chart of % over time per paper with the A* line, and your grade boundaries. |
 | **Mistakes** | Date is added automatically. Log chapter, source, what went wrong and the correct method, with a **retest date** that feeds the due list. Tick "passed" when you've got it right. |
-| **Settings** | Review intervals, priority weights, exam dates, learn-everything-by date, paper max marks and theme. Also your code, log out, backups, and export/import. |
+| **Questions** | Your question bank: every question you've uploaded, filtered by strand, chapter or result, with thumbnails. See [Question bank](#question-bank) below. |
+| **Settings** | Review intervals, priority weights, exam dates, learn-everything-by date, paper max marks and theme. Also your code, log out, backups, export/import, and how much file storage you've used. |
 
-**Learnt today** (★) appears on chapters you haven't learnt yet. It stamps today as the date you first learnt the chapter and asks for your confidence, which schedules the first review. For chapters you learnt before you started using the site, pick the date in the chapter's panel instead. Reviewing a chapter you haven't marked as learnt also marks it as learnt that day.
+**Learnt today** (★) appears on chapters you haven't learnt yet. It asks for your confidence, which schedules the first review, and the date you learnt it (today unless you change it). Reviewing a chapter you haven't marked as learnt also marks it as learnt that day.
+
+**Changing when you first learnt a chapter:** change the *First learnt* date at any time, in the Chapters table or in the chapter's panel. Chapters you haven't reviewed since are rescheduled from the new date. Once a chapter has reviews, the date can still be changed but not cleared (undo its reviews first).
 
 **Reviewed today** is on every learnt chapter. It stamps today's date and logs the review in the chapter's history. It also asks for your new confidence (1–5) and shows when the next review will be. You never type a review date. If you log one by mistake, use *Undo* in the chapter's history.
 
@@ -52,16 +55,27 @@ If you lose your connection, keep the tab open: your changes save when you're ba
 
 | Key | Action |
 |---|---|
-| `1`–`6` | Due / Chapters / Dashboard / Papers / Mistakes / Settings |
+| `1`–`7` | Due / Chapters / Dashboard / Papers / Mistakes / Questions / Settings |
 | `j` `k` (or ↓ ↑) | Move selection |
 | `l` | Learnt today for the selected chapter |
 | `r` | Reviewed today for the selected chapter |
 | `1`–`5`, then `Enter` | Set confidence in the review dialog |
-| `Enter` / `o` | Open chapter history |
+| `Enter` / `o` | Open chapter history (or the selected question) |
 | `/` | Search chapters |
-| `n` | New paper attempt / new mistake |
+| `n` | New paper attempt / mistake / question |
 | `t` | Toggle dark mode |
 | `Esc` | Close dialog or panel |
+
+### Question bank
+
+Every chapter has its own question bank. Add a question from the chapter's panel (*+ Add question*) or the **Questions** page:
+
+- **Upload the question** as photos (straight from your phone camera works) and/or PDFs. Big photos are shrunk before uploading so they're quick and still readable. Each file can be up to 10 MB.
+- Give it a title and source (e.g. *Ex 3E Q7*, *June 2019 Y540 Q8*) and say how it went: not tried yet, wrong, partly right or right.
+- **Model solution:** attach photos/PDFs of the worked solution or mark scheme, and/or type it out. It stays hidden behind *Show model solution*, so you can redo the question first.
+- **Mistakes log:** log mistakes straight on the question (they appear in the Mistakes page too, with a link back), or link a mistake you'd already logged for that chapter. When a retest is due, the due list has an *Open question* button so you can redo the actual question.
+
+Files are private to your tracker: they're stored in the same database and can only be opened with your code. Each tracker can store **100 MB** of files (a phone photo after shrinking is usually 0.3–1 MB). *Settings → Question files* shows how much you've used, can download them all as a zip, and can tidy up files no question uses any more. JSON/CSV exports include the question details but not the files themselves.
 
 ---
 
@@ -125,8 +139,10 @@ From then on, every change pushed to the repository runs the tests and updates t
 ### Good to know
 
 - **Supabase pauses free projects after a week with no activity** (for example, over a holiday). If the site says it can't reach the server, open your Supabase dashboard and press **Restore project**. No data is lost.
-- The site allows at most **500 trackers**, so a stranger can't fill the free database. Each tracker is limited to 5 MB, far more than a tracker will ever need.
+- The site allows at most **500 trackers**, so a stranger can't fill the free database. Each tracker (not counting question files) is limited to 5 MB, far more than a tracker will ever need.
+- Question files are limited to 100 MB per tracker and 350 MB for the whole site, to stay inside Supabase's free 500 MB database. Deleted files are kept for 14 days so restoring a backup brings them back.
 - To change the database later, edit `supabase/schema.sql` and run it again in the SQL Editor. It's safe to re-run and keeps all trackers.
+- **After an update that changes `schema.sql`, run it again** (SQL Editor → paste the whole file → Run). The question bank needs this: until then, uploading says the database needs updating.
 
 ---
 
@@ -138,6 +154,8 @@ web/                  the website (plain HTML/CSS/JS modules, no build step)
   js/service.js       the tracker document and every change you can make to it
   js/sync.js          talks to Supabase; saves in the background, merges changes from other devices
   js/files.js         CSV and zip export/import
+  js/filestore.js     uploads/downloads question files in 1 MB chunks
+  js/images.js        shrinks photos and makes thumbnails before uploading
   js/app.js           the pages
   config.js           Supabase URL + key (filled in by the publish workflow)
   seed_chapters.json  the 80 chapters (from seed/Maths_Further_Maths_Tracker.xlsx)

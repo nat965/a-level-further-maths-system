@@ -13,12 +13,15 @@ import io
 import json
 import os
 import re
+import shutil
 import socket
+import struct
 import subprocess
 import time
 import unittest
 import urllib.request
 import zipfile
+import zlib
 from pathlib import Path
 
 try:
@@ -41,6 +44,32 @@ def chromium_path():
         if p and os.path.exists(p):
             return p
     return None
+
+
+def make_png(width=1200, height=800):
+    """A real PNG (stripes) without needing an image library."""
+    raw = b"".join(b"\x00" + bytes((x * 7 + y * 3) % 256 for x in range(width)) for y in range(height))
+
+    def chunk(kind, data):
+        return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", zlib.crc32(kind + data) & 0xffffffff)
+    return (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 0, 0, 0, 0))
+            + chunk(b"IDAT", zlib.compress(raw)) + chunk(b"IEND", b""))
+
+
+def make_pdf(text="Q7: Solve x^2 - 5x + 6 = 0"):
+    """A one-page PDF with some text."""
+    stream = f"BT /F1 24 Tf 72 720 Td ({text}) Tj ET".encode()
+    objs = [b"<< /Type /Catalog /Pages 2 0 R >>", b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+            b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>",
+            b"<< /Length %d >>\nstream\n" % len(stream) + stream + b"\nendstream",
+            b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>"]
+    out, offsets = b"%PDF-1.4\n", []
+    for i, o in enumerate(objs, 1):
+        offsets.append(len(out))
+        out += b"%d 0 obj\n" % i + o + b"\nendobj\n"
+    xref = len(out)
+    out += b"xref\n0 %d\n0000000000 65535 f \n" % (len(objs) + 1) + b"".join(b"%010d 00000 n \n" % o for o in offsets)
+    return out + b"trailer\n<< /Size %d /Root 1 0 R >>\nstartxref\n%d\n%%%%EOF\n" % (len(objs) + 1, xref)
 
 
 @unittest.skipIf(sync_playwright is None, "playwright not installed")
@@ -226,7 +255,7 @@ class Website(unittest.TestCase):
         self.shot(page, "07-dashboard")
 
         # --- settings: the code, exports
-        page.keyboard.press("6")
+        page.keyboard.press("7")
         page.wait_for_selector("#my-code")
         self.assertEqual(page.inner_text("#my-code"), code)
         with page.expect_download() as dl:
@@ -259,7 +288,7 @@ class Website(unittest.TestCase):
         self.assertEqual(page.errors, [], page.errors)
 
         # --- restore the start-of-day backup: back to a fresh tracker
-        page.keyboard.press("6")
+        page.keyboard.press("7")
         page.wait_for_selector("#backup-list table")
         page.click("#backup-list button[data-action=restore]")
         page.wait_for_selector(".toast:has-text('Backup restored')")
@@ -318,6 +347,140 @@ class Website(unittest.TestCase):
         for p in (laptop, phone, friend):
             self.assertEqual(p.errors, [], p.errors)
 
+    # ------------------------------------------------------------------ first-learnt dates and the question bank
+
+    def rpc(self, name, args):
+        req = urllib.request.Request(f"{self.url}rest/v1/rpc/{name}", data=json.dumps(args).encode(),
+                                     headers={"Content-Type": "application/json", "apikey": "dev"})
+        with urllib.request.urlopen(req) as r:
+            return json.loads(r.read() or b"null")
+
+    def test_first_learnt_dates_and_question_bank(self):
+        page = self.new_page()
+        code = self.create_tracker(page)
+        page.click("#open-new")
+        page.wait_for_selector("#learn-section")
+
+        # --- "learnt" can be dated in the past
+        page.locator("#learn-section .due-item", has_text="Maths Y1 (red) ch 1").locator("button[data-action=learnt]").click()
+        page.wait_for_selector(".modal #learnt-on")
+        page.fill("#learnt-on", "2027-01-01")
+        page.click(".conf-picker button[data-conf='3']")
+        preview = page.inner_text("#next-preview")
+        self.assertIn("14 days after", preview)
+        self.assertIn("15 Jan", preview)
+        page.click("#review-save")
+        page.wait_for_selector("#learn-section .due-item:has-text('Maths Y1 (red) ch 2')")
+        self.wait_saved(page)
+
+        # --- first-learnt dates can be changed any time, straight in the chapters table
+        page.keyboard.press("2")
+        page.wait_for_selector("#ch-table tbody tr")
+        row = page.locator("#ch-table tbody tr").first
+        self.assertEqual(row.locator("input[data-change=first-learnt]").input_value(), "2027-01-01")
+        row.locator("input[data-change=first-learnt]").fill("2026-12-20")
+        self.wait_saved(page)
+        quad = page.locator("#ch-table tbody tr", has_text="Quadratic functions").first
+        quad.locator("input[data-change=first-learnt]").fill("2026-11-01")
+        self.wait_saved(page)
+        quad.locator("input[data-change=first-learnt]").fill("2026-10-15")
+        self.wait_saved(page)
+        page.click("#ch-table a[data-action=open]:text-is('Quadratic functions')")
+        page.wait_for_selector(".drawer:has-text('Learnt 15 Oct 2026')")
+        self.shot(page, "10-first-learnt")
+
+        # --- add a question (photo + PDF) with a model solution from the chapter panel
+        tmp = ROOT / "tests" / "e2e" / f"tmp_{self._testMethodName}"
+        tmp.mkdir(exist_ok=True)
+        self.addCleanup(shutil.rmtree, tmp, True)
+        (tmp / "question.png").write_bytes(make_png(3000, 1800))
+        (tmp / "paper.pdf").write_bytes(make_pdf())
+        (tmp / "solution.png").write_bytes(make_png(600, 400))
+        page.click(".drawer button[data-action=add-question]")
+        page.wait_for_selector("#upload-form")
+        self.assertEqual(page.locator("#upload-form [name=chapter_id] option:checked").inner_text(), "Maths Y1 (red) 3: Quadratic functions")
+        page.fill("#upload-form [name=title]", "Ex 3E Q7")
+        page.fill("#upload-form [name=source]", "Textbook")
+        page.set_input_files("#upload-form [name=files]", [str(tmp / "question.png"), str(tmp / "paper.pdf")])
+        page.click("#upload-form summary")
+        page.set_input_files("#upload-form [name=solution_files]", str(tmp / "solution.png"))
+        page.fill("#upload-form [name=solution_text]", "Factorise: (x-2)(x-3)=0 so x = 2 or 3")
+        page.click("#upload-go")
+        page.wait_for_selector(".viewer")
+        self.assertEqual(page.input_value(".viewer .title-input"), "Ex 3E Q7")
+        page.wait_for_function("[...document.querySelectorAll('.viewer [data-src-file]')].every(e => e.src.startsWith('blob:'))")
+        self.assertEqual(page.locator(".viewer .q-file").count(), 3)
+        self.assertEqual(page.locator(".viewer iframe.pdf").count(), 1)
+        # the big photo was shrunk before uploading
+        self.assertEqual(page.evaluate("document.querySelector('.viewer img').naturalWidth"), 2000)
+        self.assertIn("paper.pdf", page.inner_text(".viewer"))
+        page.click(".viewer details.solution summary")
+        self.assertIn("(x-2)(x-3)", page.input_value(".viewer textarea[data-field=solution_text]"))
+        self.wait_saved(page)
+
+        # --- log a mistake on it, from the question
+        page.fill("#q-mistake-form [name=what_wrong]", "Sign error when factorising")
+        page.fill("#q-mistake-form [name=correct_method]", "Expand back out to check")
+        page.click("#q-mistake-form button[type=submit]")
+        page.wait_for_selector(".viewer td:has-text('Sign error when factorising')")
+        # mark it as partly right
+        page.click(".viewer button[data-status=partly]")
+        page.wait_for_selector(".viewer button.primary[data-status=partly]")
+        self.wait_saved(page)
+        self.shot(page, "11-question")
+        page.keyboard.press("Escape")
+        page.wait_for_selector(".viewer", state="detached")
+        page.wait_for_selector(".drawer .q-card:has-text('Ex 3E Q7')")
+        page.keyboard.press("Escape")
+
+        # --- the Questions page and the Mistakes page link up
+        page.keyboard.press("6")
+        page.wait_for_selector(".q-card")
+        self.assertEqual(page.locator(".q-card").count(), 1)
+        page.wait_for_function("document.querySelector('.q-card img')?.src.startsWith('blob:')")
+        self.assertIn("Partly right", page.inner_text(".q-card"))
+        self.shot(page, "12-question-bank")
+        page.keyboard.press("5")
+        page.wait_for_selector("td:has-text('Sign error when factorising')")
+        page.click("a[data-action=open-question]:has-text('Ex 3E Q7')")
+        page.wait_for_selector(".viewer")
+        file_id = page.locator(".viewer .q-file").first.get_attribute("data-file-id")
+        # make the retest due today
+        page.fill(".viewer input[data-change=retest-date]", "2027-01-10")
+        self.wait_saved(page)
+        page.keyboard.press("Escape")
+
+        # --- on another device: the retest is due and the question (with its files) opens
+        other = self.new_page()
+        self.log_in(other, code)
+        other.wait_for_selector(".due-item button[data-action=open-question]")
+        other.click("button[data-action=open-question]")
+        other.wait_for_selector(".viewer")
+        other.wait_for_function("[...document.querySelectorAll('.viewer [data-src-file]')].every(e => e.src.startsWith('blob:'))")
+        self.assertEqual(other.evaluate("document.querySelector('.viewer img').naturalWidth"), 2000)
+
+        # --- remove the PDF, then delete the question: the mistake stays in the log
+        other.locator(".viewer .q-file", has_text="paper.pdf").locator("button[data-action=remove-file]").click()
+        other.wait_for_function("document.querySelectorAll('.viewer .q-file').length === 2")
+        other.click(".viewer button[data-action=delete-question]")
+        other.wait_for_selector(".viewer", state="detached")
+        self.wait_saved(other)
+        other.keyboard.press("6")
+        other.wait_for_selector(".empty:has-text('Your question bank is empty')")
+        other.keyboard.press("5")
+        other.wait_for_selector("td:has-text('Sign error when factorising')")
+        self.assertEqual(other.locator("a[data-action=open-question]").count(), 0)
+        other.keyboard.press("7")
+        other.wait_for_selector("#file-usage:has-text('of 100 MB')")
+
+        # --- files belong to one tracker: a friend's code can't read them
+        friend = self.new_page()
+        friend_code = self.create_tracker(friend)
+        self.assertIsNone(self.rpc("get_file_chunk", {"p_code": friend_code, "p_file_id": file_id, "p_seq": 0}))
+        self.assertIsNotNone(self.rpc("get_file_chunk", {"p_code": code, "p_file_id": file_id, "p_seq": 0}))
+        for p in (page, other, friend):
+            self.assertEqual(p.errors, [], p.errors)
+
     def test_import_desktop_app_export(self):
         page = self.new_page()
         self.create_tracker(page)
@@ -342,7 +505,7 @@ class Website(unittest.TestCase):
         tmp = ROOT / "tests" / "e2e" / path
         tmp.write_text(json.dumps(export))
         self.addCleanup(tmp.unlink)
-        page.keyboard.press("6")
+        page.keyboard.press("7")
         page.wait_for_selector("#import-json")
         page.set_input_files("#import-json", str(tmp))
         page.wait_for_selector(".toast:has-text('Import complete')")

@@ -14,6 +14,13 @@ const RPC = {
   save_tracker: { p_code: "text", p_data: "jsonb", p_version: "integer" },
   list_backups: { p_code: "text" },
   backup_tracker: { p_code: "text" },
+  put_file_chunk: { p_code: "text", p_file_id: "text", p_seq: "integer", p_chunks: "integer", p_name: "text",
+                    p_mime: "text", p_size: "integer", p_data: "text" },
+  get_file_chunk: { p_code: "text", p_file_id: "text", p_seq: "integer" },
+  get_small_files: { p_code: "text", p_file_ids: "jsonb" },
+  delete_files: { p_code: "text", p_file_ids: "jsonb" },
+  undelete_files: { p_code: "text", p_file_ids: "jsonb" },
+  list_files: { p_code: "text" },
   restore_backup: { p_code: "text", p_backup_id: "bigint" },
 };
 

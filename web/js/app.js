@@ -4,6 +4,8 @@ import * as L from "./logic.js";
 import * as svc from "./service.js";
 import { Remote, Tracker, formatCode, normalizeCode } from "./sync.js";
 import { docToCSVs, parseCSV, zip } from "./files.js";
+import { FileStore, ACCEPT } from "./filestore.js";
+import { uploadAll } from "./images.js";
 
 const S = {
   tracker: null,       // the open tracker (see sync.js)
@@ -14,6 +16,10 @@ const S = {
   filters: { q: "", strand: "", book: "", status: "" },
   sort: { key: "sort_order", dir: 1 },
   papersOpen: new Set(),
+  files: null,         // FileStore for question photos/PDFs
+  urls: new Map(),     // file id -> object URL, for showing files
+  viewerId: null,      // question open in the viewer
+  qFilters: { q: "", strand: "", chapter: "", status: "" },
   mistakeFilter: "open",
 };
 
@@ -62,12 +68,14 @@ async function api(method, path, body = {}) {
     if (path === "/api/boundaries") return svc.listBoundaries(doc);
     if (path === "/api/mistakes") return svc.listMistakes(doc, T);
     if (path === "/api/settings") return svc.settingsOf(doc);
+    if (path === "/api/bank") return svc.listBank(doc);
+    if ((r = m(/^\/api\/bank\/([^/]+)$/))) return svc.getBankQuestion(doc, r[1], T);
     throw new Error(`Unknown page data: ${path}`);
   }
   const change = (op, result) => { S.tracker.apply(op); return result ? result(S.tracker.doc) : { ok: true }; };
   const id = svc.newId();
   if ((r = m(/^\/api\/chapters\/([^/]+)$/)) && method === "PATCH") return change((d) => svc.updateChapter(d, r[1], body, T), (d) => svc.getChapter(d, r[1], T));
-  if ((r = m(/^\/api\/chapters\/([^/]+)\/learnt$/))) return change((d) => svc.markLearnt(d, r[1], body.confidence, T));
+  if ((r = m(/^\/api\/chapters\/([^/]+)\/learnt$/))) return change((d) => svc.markLearnt(d, r[1], body.confidence, T, body.on || T));
   if ((r = m(/^\/api\/chapters\/([^/]+)\/review$/))) {
     const now = new Date().toISOString();
     return change((d) => svc.reviewChapter(d, r[1], body.confidence, body.note, T, { reviewId: id, now }));
@@ -83,6 +91,13 @@ async function api(method, path, body = {}) {
   if ((r = m(/^\/api\/mistakes\/([^/]+)$/)) && method === "PATCH") return change((d) => svc.updateMistake(d, r[1], body, T));
   if ((r = m(/^\/api\/mistakes\/([^/]+)\/retest$/))) return change((d) => svc.retestMistake(d, r[1], Boolean(body.passed), T));
   if ((r = m(/^\/api\/mistakes\/([^/]+)$/)) && method === "DELETE") return change((d) => svc.deleteMistake(d, r[1]));
+  if (path === "/api/bank" && method === "POST") return change((d) => svc.createBankQuestion(d, body, T, { id }), (d) => svc.getBankQuestion(d, id, T));
+  if ((r = m(/^\/api\/bank\/([^/]+)\/files$/)) && method === "POST") return change((d) => svc.addBankFiles(d, r[1], body.role, body.files));
+  if ((r = m(/^\/api\/bank\/([^/]+)\/files\/([^/]+)$/)) && method === "DELETE") return change((d) => svc.removeBankFile(d, r[1], r[2]));
+  if ((r = m(/^\/api\/bank\/([^/]+)\/link$/))) return change((d) => svc.linkMistake(d, r[1], body.mistake_id));
+  if ((r = m(/^\/api\/bank\/([^/]+)$/)) && method === "PATCH") return change((d) => svc.updateBankQuestion(d, r[1], body));
+  if ((r = m(/^\/api\/bank\/([^/]+)$/)) && method === "DELETE") return change((d) => svc.deleteBankQuestion(d, r[1]));
+  if ((r = m(/^\/api\/mistakes\/([^/]+)\/unlink$/))) return change((d) => svc.unlinkMistake(d, r[1]));
   if (path === "/api/settings" && method === "PUT") return change((d) => svc.saveSettings(d, body), (d) => svc.settingsOf(d));
   if (path === "/api/settings/reset") return change((d) => svc.resetSettings(d, body.keys || []), (d) => svc.settingsOf(d));
   throw new Error(`Unknown change: ${method} ${path}`);
@@ -160,7 +175,7 @@ async function cycleTheme() {
 
 // ------------------------------------------------------------------ router
 
-const PAGES = { due: renderDue, chapters: renderChapters, dashboard: renderDashboard, papers: renderPapers, mistakes: renderMistakes, settings: renderSettings };
+const PAGES = { due: renderDue, chapters: renderChapters, dashboard: renderDashboard, papers: renderPapers, mistakes: renderMistakes, questions: renderQuestions, settings: renderSettings };
 
 function currentRoute() { const r = location.hash.replace(/^#\/?/, "").split("?")[0]; return PAGES[r] ? r : "due"; }
 async function render() {
@@ -169,6 +184,7 @@ async function render() {
   try { await PAGES[S.route]($("#main")); }
   catch (e) { $("#main").innerHTML = `<div class="empty">Something went wrong: ${esc(e.message)}</div>`; }
   highlightSelection(false);
+  if (S.viewerId) { try { await openQuestion(S.viewerId, { keepScroll: true }); } catch { closeViewer(); } }
 }
 window.addEventListener("hashchange", () => { S.sel = 0; render(); $("#main").focus(); });
 
@@ -194,7 +210,7 @@ async function renderDue(main) {
           <div class="meta">${m.days_overdue > 0 ? `<span class="pill bad">⚠ ${plural(m.days_overdue, "day")} overdue</span>` : `<span class="pill warn">● Due today</span>`}
           <span>${esc(m.chapter_title || "No chapter")}</span>${m.source ? `<span>Source: ${esc(m.source)}</span>` : ""}<span>Logged ${fmtDate(m.logged_on)}</span></div>
           <details class="reveal"><summary>Show correct method</summary><div>${esc(m.correct_method) || "<i>No method recorded</i>"}</div></details></div>
-        <div class="actions"><button data-action="retest" data-id="${m.id}" data-passed="0">✗ Not yet</button><button class="primary" data-action="retest" data-id="${m.id}" data-passed="1">✓ Passed retest</button></div>
+        <div class="actions">${m.question_id ? `<button data-action="open-question" data-qid="${esc(m.question_id)}">📄 Open question</button>` : ""}<button data-action="retest" data-id="${m.id}" data-passed="0">✗ Not yet</button><button class="primary" data-action="retest" data-id="${m.id}" data-passed="1">✓ Passed retest</button></div>
       </div>`).join("") + `</div></div>`;
   }
   if (due.upcoming.length) {
@@ -294,8 +310,8 @@ function drawChapterTable() {
   $("#ch-table thead").innerHTML = `<tr>${CH_COLS.map(([k, label]) => `<th class="sortable" data-sort="${k}">${label}${S.sort.key === k ? ` <span class="arrow">${S.sort.dir > 0 ? "▲" : "▼"}</span>` : ""}</th>`).join("")}<th></th></tr>`;
   $("#ch-table tbody").innerHTML = list.map((c) => `<tr data-row data-id="${c.id}">
     <td>${esc(c.strand)}</td><td class="small">${esc(c.book)}</td><td class="num">${c.ch_num}</td>
-    <td class="title-cell"><a data-action="open" data-id="${c.id}">${esc(c.title)}</a></td>
-    <td>${esc(c.level)}</td><td class="small nowrap">${c.first_learnt ? fmtDate(c.first_learnt) : "—"}</td>
+    <td class="title-cell"><a data-action="open" data-id="${c.id}">${esc(c.title)}</a>${c.question_count ? ` <span class="pill small" title="Questions in the question bank">📄 ${c.question_count}</span>` : ""}</td>
+    <td>${esc(c.level)}</td><td class="small nowrap"><input type="date" class="date-cell" data-change="first-learnt" data-id="${c.id}" value="${c.first_learnt || ""}" max="${S.boot.today}" aria-label="First learnt"></td>
     <td>${statusSelect(c, "summary_status")}</td><td>${statusSelect(c, "exercises_status")}</td><td>${statusSelect(c, "examq_status")}</td>
     <td><select data-change="confidence" data-id="${c.id}" aria-label="Confidence"><option value="">–</option>${[1, 2, 3, 4, 5].map((n) => `<option ${c.confidence === n ? "selected" : ""}>${n}</option>`).join("")}</select></td>
     <td class="small">${c.last_reviewed ? fmtDate(c.last_reviewed) : "—"}</td>
@@ -347,11 +363,16 @@ async function openChapter(id) {
         </div>
         <label class="field" style="margin-top:10px">Notes <textarea data-change="notes" data-id="${c.id}" placeholder="Anything to remember about this chapter… (saves automatically)">${esc(c.notes)}</textarea></label>
       </div>
+      <div class="section"><div class="page-head" style="margin-bottom:8px"><h2 style="margin:0">Question bank</h2><div class="spacer"></div>
+        <button class="small primary" data-action="add-question" data-chapter="${c.id}">+ Add question</button></div>
+        <div id="drawer-questions">${bankGrid(svc.listBank(S.tracker.doc).filter((q) => q.chapter_id === c.id), "No questions yet. Add photos or PDFs of questions you've done on this chapter.")}</div>
+      </div>
       <div class="section"><h2>History</h2>
         ${events.length ? `<ul class="timeline">${events.map((e) => `<li class="${e.kind}"><div class="when">${fmtDate(e.date, false)} ${fmtDate(e.date).slice(-4)}</div>${e.html}</li>`).join("")}</ul>` : `<div class="empty">Nothing yet. Press <b>Learnt today</b> when you first learn this chapter.</div>`}
       </div>
     </aside>`;
   S.drawerId = id;
+  hydrateThumbs($(".drawer"));
   $(".drawer").focus();
 }
 function closeDrawer() { $("#drawer-root").innerHTML = ""; S.drawerId = null; }
@@ -373,6 +394,7 @@ function openReview(id, mode = "review") {
       <h2 style="margin:4px 0 2px">${esc(c.title)}</h2>
       <div class="muted small">How confident are you ${learning ? "with it" : "now"}? Press <kbd>1</kbd>–<kbd>5</kbd>, then <kbd>Enter</kbd>.</div>
       <div class="conf-picker">${[1, 2, 3, 4, 5].map((n) => `<button data-conf="${n}"><b>${n}</b><span>${CONF_LABEL[n]}</span></button>`).join("")}</div>
+      ${learning ? `<label class="field" style="margin-top:6px">Learnt on<input type="date" id="learnt-on" value="${S.boot.today}" max="${S.boot.today}"></label>` : ""}
       <div class="small muted" id="next-preview">&nbsp;</div>
       ${learning ? "" : `<label class="field" style="margin-top:10px">Note (optional)<textarea id="review-note" placeholder="What did you do? e.g. Ex 4B + 5 exam Qs"></textarea></label>`}
       <div class="form-row" style="justify-content:flex-end;margin-top:12px"><button data-action="close-modal">Cancel</button><button class="primary" id="review-save" disabled>${learning ? "Mark as learnt" : "Log review"}</button></div>
@@ -381,26 +403,31 @@ function openReview(id, mode = "review") {
     chosen = n;
     $$(".conf-picker button").forEach((b) => b.classList.toggle("chosen", +b.dataset.conf === n));
     $("#review-save").disabled = false;
-    $("#next-preview").textContent = `${learning ? "First review" : "Next review"} in ${plural(iv[n], "day")}: ${fmtDate(addDays(S.boot.today, iv[n]), false)}`;
+    const from = (learning && $("#learnt-on").value) || S.boot.today;
+    const next = addDays(from, iv[n]);
+    const late = L.daysBetween(next, S.boot.today);
+    const when = from === S.boot.today ? `in ${plural(iv[n], "day")}` : `${plural(iv[n], "day")} after ${fmtDate(from, false)}`;
+    $("#next-preview").textContent = `${learning ? "First review" : "Next review"} ${when}: ${fmtDate(next, false)}${late > 0 ? " (already due)" : ""}`;
   };
+  if (learning) $("#learnt-on").addEventListener("change", () => { if (chosen) pick(chosen); });
   if (chosen) pick(chosen);
   $$(".conf-picker button").forEach((b) => b.addEventListener("click", () => pick(+b.dataset.conf)));
   const save = async () => {
     if (!chosen) return;
     $("#review-save").disabled = true;
     try {
-      if (learning) await api("POST", `/api/chapters/${id}/learnt`, { confidence: chosen });
+      if (learning) await api("POST", `/api/chapters/${id}/learnt`, { confidence: chosen, on: $("#learnt-on").value || S.boot.today });
       else await api("POST", `/api/chapters/${id}/review`, { confidence: chosen, note: $("#review-note").value.trim() });
       closeModal();
-      toast(`${learning ? "Marked as learnt" : "Logged review"} · ${learning ? "first review" : "next"} in ${plural(iv[chosen], "day")}`);
+      toast(learning ? "Marked as learnt" : `Logged review · next in ${plural(iv[chosen], "day")}`);
       await afterChange(id);
     } catch (e) { toast(e.message, "error"); $("#review-save").disabled = false; }
   };
   $("#review-save").addEventListener("click", save);
   S.modalKeys = (e) => {
-    if (/^[1-5]$/.test(e.key) && e.target.id !== "review-note") { pick(+e.key); e.preventDefault(); return true; }
+    if (/^[1-5]$/.test(e.key) && !isTyping(e)) { pick(+e.key); e.preventDefault(); return true; }
     if (e.key === "Enter" && e.target.closest("[data-action=close-modal]")) return false;
-    if (e.key === "Enter" && !(e.target.id === "review-note" && e.shiftKey)) { save(); e.preventDefault(); return true; }
+    if (e.key === "Enter" && !(e.target.id === "review-note" && e.shiftKey) && !$("#review-save").disabled) { save(); e.preventDefault(); return true; }
     return false;
   };
   (chosen ? $("#review-save") : $(".conf-picker button")).focus();
@@ -622,8 +649,9 @@ async function renderMistakes(main) {
       </div></form>
     <div class="section"><div class="filters">
       ${[["open", "Open"], ["due", "Retest due"], ["passed", "Passed"], ["all", "All"]].map(([k, v]) => `<button class="small ${f === k ? "primary" : ""}" data-action="mistake-filter" data-f="${k}">${v} (${rows.filter((m) => k === "all" || (k === "open" && !m.retest_passed) || (k === "due" && m.retest_due) || (k === "passed" && m.retest_passed)).length})</button>`).join("")}</div>
-      ${shown.length ? `<div class="table-wrap"><table class="compact"><thead><tr><th>Date</th><th>Chapter</th><th>Source</th><th>What went wrong</th><th>Correct method</th><th>Retest</th><th>Passed</th><th></th></tr></thead><tbody>
+      ${shown.length ? `<div class="table-wrap"><table class="compact"><thead><tr><th>Date</th><th>Chapter</th><th>Source</th><th>What went wrong</th><th>Correct method</th><th>Question</th><th>Retest</th><th>Passed</th><th></th></tr></thead><tbody>
         ${shown.map((m) => `<tr data-row><td class="small">${fmtDate(m.logged_on)}</td><td class="title-cell">${m.chapter_id ? `<a data-action="open" data-id="${m.chapter_id}">${esc(m.chapter_title)}</a>` : "—"}</td><td class="small">${esc(m.source)}</td><td>${esc(m.what_wrong)}</td><td class="small">${esc(m.correct_method)}</td>
+          <td class="small">${m.question_id ? `<a href="#" data-action="open-question" data-qid="${esc(m.question_id)}">📄 ${esc(m.question_title)}</a>` : "—"}</td>
           <td class="small">${m.retest_passed ? "—" : `<input type="date" value="${m.retest_on || ""}" data-change="retest-date" data-id="${m.id}" aria-label="Retest date"> ${m.retest_due ? `<span class="pill bad">due</span>` : ""}`}</td>
           <td><label style="display:flex;gap:6px;align-items:center"><input type="checkbox" data-change="passed" data-id="${m.id}" ${m.retest_passed ? "checked" : ""}> ${m.retest_passed ? `<span class="small muted">${fmtDate(m.passed_on)}</span>` : ""}</label></td>
           <td><button class="small ghost danger" data-action="del-mistake" data-id="${m.id}">Delete</button></td></tr>`).join("")}
@@ -637,6 +665,284 @@ async function renderMistakes(main) {
     await guard(() => api("POST", "/api/mistakes", { chapter_id: fd.get("chapter_id"), source: fd.get("source"), what_wrong: fd.get("what_wrong"), correct_method: fd.get("correct_method"), retest_on: fd.get("retest_on") || null }));
     toast("Mistake logged"); render();
   });
+}
+
+// ------------------------------------------------------------------ Question bank
+
+const Q_STATUS = { not_tried: "Not tried yet", wrong: "Got it wrong", partly: "Partly right", right: "Got it right" };
+const Q_STATUS_PILL = { not_tried: "", wrong: "bad", partly: "warn", right: "good" };
+const qStatusPill = (st) => `<span class="pill ${Q_STATUS_PILL[st]}">${Q_STATUS[st]}</span>`;
+const fmtSize = (b) => (b >= 1048576 ? `${(b / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round(b / 1024))} KB`);
+const isPdf = (f) => f.mime === "application/pdf";
+
+async function urlFor(fileId) {
+  if (!S.urls.has(fileId)) S.urls.set(fileId, URL.createObjectURL(await S.files.get(fileId)));
+  return S.urls.get(fileId);
+}
+
+// Placeholder for a file's thumbnail; hydrateThumbs() fills in the pictures.
+function thumbHTML(f) {
+  if (!f) return `<div class="thumb">📄</div>`;
+  if (isPdf(f)) return `<div class="thumb pdf" title="${esc(f.name)}"><span>PDF</span></div>`;
+  return `<div class="thumb" data-thumb="${esc(f.thumb_id || "")}" data-file="${esc(f.id)}" title="${esc(f.name)}">🖼</div>`;
+}
+
+async function hydrateThumbs(root) {
+  const els = $$("[data-thumb]", root).filter((el) => !el.dataset.done);
+  if (!els.length) return;
+  const ids = els.map((el) => el.dataset.thumb).filter(Boolean);
+  let got = {};
+  try { got = await S.files.getSmall(ids); } catch { return; }
+  for (const el of els) {
+    el.dataset.done = "1";
+    const blob = got[el.dataset.thumb];
+    if (!blob) continue;
+    if (!S.urls.has(el.dataset.thumb)) S.urls.set(el.dataset.thumb, URL.createObjectURL(blob));
+    el.innerHTML = `<img alt="" src="${S.urls.get(el.dataset.thumb)}">`;
+  }
+}
+
+function bankGrid(list, emptyText) {
+  if (!list.length) return `<div class="empty small">${emptyText}</div>`;
+  return `<div class="q-grid">${list.map((q) => `
+    <button class="q-card" data-row data-action="open-question" data-qid="${esc(q.id)}">
+      ${thumbHTML(q.files[0])}
+      <div class="q-card-body">
+        <div class="q-title">${esc(q.title || "Untitled question")}</div>
+        <div class="small muted">${esc(q.chapter_title || "")}${q.source ? ` · ${esc(q.source)}` : ""}</div>
+        <div class="chip-row" style="margin-top:6px">${qStatusPill(q.status)}${q.has_solution ? `<span class="pill info">✓ solution</span>` : ""}${q.open_mistakes ? `<span class="pill bad">${plural(q.open_mistakes, "open mistake")}</span>` : q.mistake_count ? `<span class="pill">${plural(q.mistake_count, "mistake")}</span>` : ""}${q.files.length > 1 ? `<span class="pill">${q.files.length} files</span>` : ""}</div>
+      </div>
+    </button>`).join("")}</div>`;
+}
+
+async function renderQuestions(main) {
+  await loadChapters();
+  const all = await api("GET", "/api/bank");
+  const f = S.qFilters, q = f.q.trim().toLowerCase();
+  const list = all.filter((x) => {
+    if (f.strand && x.chapter_strand !== f.strand) return false;
+    if (f.chapter && x.chapter_id !== f.chapter) return false;
+    if (f.status === "open" && !x.open_mistakes) return false;
+    if (f.status === "nosolution" && x.has_solution) return false;
+    if (Q_STATUS[f.status] && x.status !== f.status) return false;
+    if (q && !`${x.title} ${x.source} ${x.notes} ${x.chapter_title} ${x.solution_text}`.toLowerCase().includes(q)) return false;
+    return true;
+  });
+  const strands = [...new Set(S.chapters.map((c) => c.strand))];
+  const statusOpts = { "": "Any result", ...Q_STATUS, open: "Has open mistakes", nosolution: "No model solution yet" };
+  main.innerHTML = `<div class="page-head"><h1>Question bank</h1><span class="muted">${list.length} of ${all.length}</span><div class="spacer"></div>
+      <span class="muted small"><kbd>n</kbd> add question</span><button class="primary" data-action="add-question">+ Add question</button></div>
+    <div class="filters">
+      <input type="search" id="q-search" placeholder="Search titles, sources, notes…" value="${esc(f.q)}" aria-label="Search questions">
+      <select data-qfilter="strand" aria-label="Strand"><option value="">All strands</option>${strands.map((x) => `<option ${x === f.strand ? "selected" : ""}>${esc(x)}</option>`).join("")}</select>
+      <select data-qfilter="chapter" aria-label="Chapter">${chapterOptions(f.chapter).replace("Choose chapter…", "All chapters")}</select>
+      <select data-qfilter="status" aria-label="Result">${Object.entries(statusOpts).map(([k, v]) => `<option value="${k}" ${k === f.status ? "selected" : ""}>${v}</option>`).join("")}</select>
+    </div>
+    ${all.length ? bankGrid(list, "No questions match these filters.")
+      : `<div class="empty">Your question bank is empty.<br>Add a photo or PDF of a question you've done, with its chapter, and optionally a model solution. You can link mistakes to it and redo it when a retest is due.<br><br><button class="primary" data-action="add-question">+ Add your first question</button></div>`}`;
+  $("#q-search").addEventListener("input", (e) => { S.qFilters.q = e.target.value; renderQuestions(main).then(() => { const el = $("#q-search"); el.focus(); el.setSelectionRange(el.value.length, el.value.length); }); });
+  $$("[data-qfilter]").forEach((el) => el.addEventListener("change", () => { S.qFilters[el.dataset.qfilter] = el.value; renderQuestions(main); }));
+  hydrateThumbs(main);
+}
+
+// Upload dialog: a new question (with its chapter and optional solution), or more files for an
+// existing question (role "question" or "solution").
+function openUpload({ chapterId = "", questionId = null, role = "question" } = {}) {
+  const adding = Boolean(questionId);
+  const q = adding ? S.tracker.doc.questions.find((x) => x.id === questionId) : null;
+  $("#modal-root").innerHTML = `<div class="backdrop modal-backdrop" data-action="close-modal"></div>
+    <form class="modal wide" id="upload-form" role="dialog" aria-label="Add question">
+      <button type="button" class="ghost close-x" data-action="close-modal" aria-label="Close">✕</button>
+      <h2>${adding ? (role === "solution" ? "Add model solution files" : "Add more question files") + ` <span class="muted small">· ${esc(q.title || "Untitled question")}</span>` : "Add a question"}</h2>
+      ${adding ? "" : `
+      <div class="form-row">
+        <label class="field" style="flex:2;min-width:240px">Chapter<select name="chapter_id" required>${chapterOptions(chapterId)}</select></label>
+        <label class="field" style="flex:1;min-width:150px">How did it go?<select name="status">${Object.entries(Q_STATUS).map(([k, v]) => `<option value="${k}" ${k === "wrong" ? "selected" : ""}>${v}</option>`).join("")}</select></label>
+      </div>
+      <div class="form-row" style="margin-top:8px">
+        <label class="field" style="flex:1;min-width:180px">Title<input name="title" placeholder="e.g. Ex 4B Q7, June 2019 Y540 Q8"></label>
+        <label class="field" style="flex:1;min-width:180px">Source<input name="source" placeholder="e.g. Textbook, past paper, worksheet"></label>
+      </div>`}
+      <label class="field" style="margin-top:10px">${adding ? "Files" : "Question: photos or PDFs"}<input type="file" name="files" accept="${ACCEPT}" multiple ${adding ? "required" : "required"}></label>
+      <div class="small muted">Photos are shrunk before uploading. PDFs up to 10 MB.</div>
+      ${adding ? "" : `
+      <details class="reveal" style="margin-top:10px"><summary>Add a model solution now (optional)</summary>
+        <label class="field" style="margin-top:8px">Solution photos or PDFs<input type="file" name="solution_files" accept="${ACCEPT}" multiple></label>
+        <label class="field" style="margin-top:8px">Or type/paste the solution<textarea name="solution_text" placeholder="Model solution or mark-scheme notes"></textarea></label>
+      </details>`}
+      <div id="upload-progress" hidden style="margin-top:12px"><div class="progress"><i style="width:0%"></i></div><div class="small muted" id="upload-status"></div></div>
+      <div class="form-row" style="justify-content:flex-end;margin-top:12px"><button type="button" data-action="close-modal">Cancel</button><button class="primary" type="submit" id="upload-go">${adding ? "Upload" : "Add question"}</button></div>
+    </form>`;
+  S.modalKeys = () => false;
+  const form = $("#upload-form");
+  form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const fd = new FormData(form);
+    const files = form.elements.namedItem("files").files;
+    const solution = adding ? [] : [...form.elements.namedItem("solution_files").files];
+    if (!files.length) return toast("Choose at least one photo or PDF", "error");
+    const btn = $("#upload-go");
+    btn.disabled = true;
+    $("#upload-progress").hidden = false;
+    const all = [...files, ...solution];
+    const bar = $("#upload-progress i"), status = $("#upload-status");
+    const progress = (label) => (x) => { bar.style.width = `${Math.round(x * 100)}%`; status.textContent = `${label} ${Math.round(x * 100)}%`; };
+    let uploaded = [], solutionUploaded = [];
+    try {
+      uploaded = await uploadAll(S.files, [...files], progress(`Uploading ${plural(files.length, "file")}…`));
+      if (solution.length) solutionUploaded = await uploadAll(S.files, solution, progress(`Uploading solution…`));
+      let target;
+      if (adding) {
+        await api("POST", `/api/bank/${questionId}/files`, { role, files: uploaded });
+        target = questionId;
+      } else {
+        const q2 = await api("POST", "/api/bank", { chapter_id: fd.get("chapter_id"), status: fd.get("status"), title: fd.get("title"),
+          source: fd.get("source"), solution_text: fd.get("solution_text"), files: uploaded, solution_files: solutionUploaded });
+        target = q2.id;
+      }
+      closeModal();
+      toast(adding ? `Added ${plural(all.length, "file")}` : "Question added");
+      S.viewerId = target;
+      await render();
+      if (S.drawerId) await openChapter(S.drawerId);
+    } catch (err) {
+      S.files.remove([...uploaded, ...solutionUploaded].flatMap((f) => [f.id, f.thumb_id].filter(Boolean))).catch(() => {});
+      toast(err.message, "error");
+      btn.disabled = false;
+      status.textContent = `Upload failed: ${err.message}`;
+    }
+  });
+  form.elements.namedItem(adding ? "files" : "chapter_id").focus();
+}
+
+async function openQuestion(id, { keepScroll = false } = {}) {
+  const q = await api("GET", `/api/bank/${id}`);
+  const prevScroll = keepScroll ? $(".viewer")?.scrollTop || 0 : 0;
+  const solOpen = keepScroll && $(".viewer details.solution")?.open;
+  const others = S.tracker.doc.mistakes.filter((m) => m.chapter_id === q.chapter_id && !m.question_id);
+  const fileBlock = (f, role) => `<figure class="q-file" data-file-id="${esc(f.id)}">
+      ${isPdf(f) ? `<iframe class="pdf" title="${esc(f.name)}" data-src-file="${esc(f.id)}"></iframe>` : `<img alt="${esc(f.name)}" data-src-file="${esc(f.id)}">`}
+      <figcaption class="small muted">${esc(f.name)} · ${fmtSize(f.size)} · <a href="#" data-open-file="${esc(f.id)}">Open full size</a>
+        <button type="button" class="ghost small danger" data-action="remove-file" data-qid="${esc(q.id)}" data-file="${esc(f.id)}" data-thumb="${esc(f.thumb_id || "")}">Remove</button></figcaption>
+    </figure>`;
+  const retestDays = S.boot.settings.mistake_retest_days;
+  $("#viewer-root").innerHTML = `<div class="backdrop viewer-backdrop${keepScroll ? " no-anim" : ""}" data-action="close-viewer"></div>
+    <section class="viewer${keepScroll ? " no-anim" : ""}" role="dialog" aria-label="${esc(q.title || "Question")}" tabindex="-1">
+      <button class="ghost close-x" data-action="close-viewer" aria-label="Close">✕</button>
+      <div class="muted small"><a href="#" data-action="open" data-id="${esc(q.chapter_id)}">${esc(q.book)} ch ${q.ch_num}: ${esc(q.chapter_title)}</a> · added ${fmtDate(q.added_on)}</div>
+      <input class="title-input" data-change="bank-field" data-field="title" data-qid="${esc(q.id)}" value="${esc(q.title)}" placeholder="Untitled question" aria-label="Title">
+      <div class="form-row">
+        <label class="field">Source<input data-change="bank-field" data-field="source" data-qid="${esc(q.id)}" value="${esc(q.source)}" placeholder="e.g. Textbook Ex 4B"></label>
+        <label class="field">Chapter<select data-change="bank-field" data-field="chapter_id" data-qid="${esc(q.id)}">${chapterOptions(q.chapter_id)}</select></label>
+      </div>
+      <div class="chip-row" style="margin:10px 0" role="group" aria-label="How did it go?">${Object.entries(Q_STATUS).map(([k, v]) =>
+        `<button type="button" class="small ${q.status === k ? "primary" : ""}" data-action="q-status" data-qid="${esc(q.id)}" data-status="${k}">${v}</button>`).join("")}</div>
+
+      <div class="section"><div class="page-head" style="margin-bottom:6px"><h2 style="margin:0">Question</h2><div class="spacer"></div>
+        <button type="button" class="small" data-action="add-files" data-qid="${esc(q.id)}" data-role="question">+ Add file</button></div>
+        ${q.files.map((f) => fileBlock(f, "question")).join("")}</div>
+
+      <details class="section solution card"${solOpen ? " open" : ""}><summary><b>Show model solution</b>${q.has_solution ? "" : ` <span class="muted small">(none yet)</span>`}</summary>
+        <div style="margin-top:10px">${q.solution_files.map((f) => fileBlock(f, "solution")).join("")}
+          <label class="field">Solution notes<textarea data-change="bank-field" data-field="solution_text" data-qid="${esc(q.id)}" placeholder="Type or paste the model solution / mark scheme">${esc(q.solution_text)}</textarea></label>
+          <button type="button" class="small" style="margin-top:8px" data-action="add-files" data-qid="${esc(q.id)}" data-role="solution">+ Add solution photo/PDF</button></div>
+      </details>
+
+      <div class="section"><h2>Mistakes on this question</h2>
+        ${q.mistakes.length ? `<div class="table-wrap"><table class="compact"><thead><tr><th>Logged</th><th>What went wrong</th><th>Correct method</th><th>Retest</th><th>Passed</th><th></th></tr></thead><tbody>${q.mistakes.map((m) => `
+          <tr><td class="small">${fmtDate(m.logged_on)}</td><td>${esc(m.what_wrong)}</td><td class="small">${esc(m.correct_method)}</td>
+          <td class="small">${m.retest_passed ? "—" : `<input type="date" value="${m.retest_on || ""}" data-change="retest-date" data-id="${m.id}" aria-label="Retest date">${m.retest_due ? ` <span class="pill bad">due</span>` : ""}`}</td>
+          <td><input type="checkbox" data-change="passed" data-id="${m.id}" ${m.retest_passed ? "checked" : ""} aria-label="Passed retest"></td>
+          <td><button type="button" class="ghost small" data-action="unlink-mistake" data-id="${m.id}">Unlink</button></td></tr>`).join("")}</tbody></table></div>`
+          : `<div class="muted small">No mistakes logged on this question yet.</div>`}
+        <form class="card" id="q-mistake-form" style="margin-top:10px"><h3 style="margin-top:0">Log a mistake on this question</h3>
+          <div class="form-row">
+            <label class="field" style="flex:1;min-width:200px">What went wrong<textarea name="what_wrong" required placeholder="e.g. Forgot the ± when square-rooting"></textarea></label>
+            <label class="field" style="flex:1;min-width:200px">Correct method<textarea name="correct_method" placeholder="How to do it properly"></textarea></label>
+          </div>
+          <div class="form-row" style="margin-top:8px"><label class="field">Retest on<input type="date" name="retest_on" value="${addDays(S.boot.today, retestDays)}"></label>
+            <div style="flex:1"></div><button class="primary" type="submit">Log mistake</button></div>
+        </form>
+        ${others.length ? `<label class="field" style="margin-top:10px">Or link a mistake you've already logged for this chapter<select data-change="link-mistake" data-qid="${esc(q.id)}"><option value="">Choose a mistake…</option>${others.map((m) => `<option value="${esc(m.id)}">${fmtDate(m.logged_on)}: ${esc(m.what_wrong.slice(0, 80))}</option>`).join("")}</select></label>` : ""}
+      </div>
+
+      <div class="section"><label class="field">Notes<textarea data-change="bank-field" data-field="notes" data-qid="${esc(q.id)}" placeholder="Anything to remember about this question">${esc(q.notes)}</textarea></label></div>
+      <div class="section"><button type="button" class="danger" data-action="delete-question" data-qid="${esc(q.id)}">Delete question</button></div>
+    </section>`;
+  S.viewerId = q.id;
+  const viewer = $(".viewer");
+  viewer.scrollTop = prevScroll;
+  if (!keepScroll) viewer.focus();
+  $("#q-mistake-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const fd = new FormData(e.target);
+    await guard(() => api("POST", "/api/mistakes", { question_id: q.id, source: q.title || q.source, what_wrong: fd.get("what_wrong"),
+      correct_method: fd.get("correct_method"), retest_on: fd.get("retest_on") || null }));
+    toast("Mistake logged"); render();
+  });
+  // load the files themselves
+  for (const el of $$("[data-src-file]", viewer)) {
+    urlFor(el.dataset.srcFile).then((url) => { el.src = url; }).catch((err) => {
+      el.replaceWith(Object.assign(document.createElement("div"), { className: "empty small", textContent: err.message }));
+    });
+  }
+  for (const a of $$("[data-open-file]", viewer)) {
+    a.addEventListener("click", async (e) => {
+      e.preventDefault();
+      try { window.open(await urlFor(a.dataset.openFile), "_blank", "noopener"); } catch (err) { toast(err.message, "error"); }
+    });
+  }
+}
+
+function closeViewer() { $("#viewer-root").innerHTML = ""; S.viewerId = null; }
+
+async function loadFileUsage() {
+  const el = $("#file-usage");
+  if (!el) return;
+  try {
+    const u = await S.files.usage();
+    if (!el.isConnected) return;
+    const pct = Math.min(100, (100 * u.bytes) / u.limit);
+    el.classList.remove("muted");
+    el.innerHTML = `<div style="display:flex;gap:10px;align-items:center;max-width:420px"><div class="progress" style="flex:1"><i style="width:${pct}%"></i></div>
+      <span class="small num">${fmtSize(u.bytes)} of 100 MB · ${plural(u.files, "file")}</span></div>`;
+  } catch (e) {
+    if (el.isConnected) el.textContent = /Could not find the function/.test(e.message)
+      ? "File storage isn't set up yet: run supabase/schema.sql again in Supabase (see the README)." : `Couldn't check storage: ${e.message}`;
+  }
+}
+
+// After restoring a backup or importing, bring back any deleted files the tracker uses again.
+function restoreFiles() {
+  const ids = [...svc.referencedFileIds(S.tracker.doc)];
+  if (ids.length) S.files.undelete(ids).catch(() => {});
+}
+
+async function downloadAllFiles(btn) {
+  const qs = S.tracker.doc.questions || [];
+  const items = qs.flatMap((q) => [...q.files.map((f) => [q, f, "question"]), ...q.solution_files.map((f) => [q, f, "solution"])]);
+  if (!items.length) return toast("There are no question files yet");
+  const label = btn.textContent;
+  btn.disabled = true;
+  const out = {}, used = new Set();
+  const safe = (x) => String(x).replace(/[\\/:*?"<>|]+/g, "_").slice(0, 80) || "untitled";
+  try {
+    let i = 0;
+    for (const [q, f, role] of items) {
+      btn.textContent = `Downloading ${++i} of ${items.length}…`;
+      const ch = S.tracker.doc.chapters.find((c) => c.id === q.chapter_id);
+      let name = `${safe(`${ch?.book || ""} ch${ch?.ch_num ?? ""} ${ch?.title || ""}`)}/${safe(q.title || "untitled")}${role === "solution" ? " - solution" : ""} - ${safe(f.name)}`;
+      while (used.has(name)) name = name.replace(/(\.[^.]*)?$/, (ext) => `_${i}${ext || ""}`);
+      used.add(name);
+      out[name] = new Uint8Array(await (await S.files.get(f.id)).arrayBuffer());
+    }
+    download(`question-files-${today()}.zip`, zip(out), "application/zip");
+  } catch (e) {
+    toast(`Couldn't download everything: ${e.message}`, "error");
+  } finally {
+    btn.disabled = false;
+    btn.textContent = label;
+  }
 }
 
 // ------------------------------------------------------------------ Settings
@@ -692,11 +998,19 @@ async function renderSettings(main) {
       <label class="field">Import CSV into table<select id="import-table">${S.boot.tables.map((t) => `<option>${t}</option>`).join("")}</select></label>
       <label class="field">CSV file (replaces that table)<input type="file" accept=".csv,text/csv" id="import-csv"></label>
     </div>
+    <h3 class="section">Question files</h3>
+    <div id="file-usage" class="muted small">Loading…</div>
+    <div class="form-row" style="margin-top:8px">
+      <button data-action="download-files">Download all question files (zip)</button>
+      <button data-action="tidy-files" title="Deletes uploaded files that no question uses any more">Tidy up unused files</button>
+    </div>
+    <p class="small muted">Exports above include your questions' details but not the photos/PDFs themselves. Download those separately here.</p>
     <h3 class="section">Backups</h3>
     <p class="small muted" style="margin-top:0">The server keeps a copy of your tracker from the start of each day you use it (last 14 days), plus one before every restore.</p>
     <div id="backup-list" class="muted small">Loading…</div>
   </div>`;
   loadBackups();
+  loadFileUsage();
 
   $$("form[data-settings]").forEach((form) => form.addEventListener("submit", (e) => { e.preventDefault(); saveSettingsForm(form); }));
   $("#import-json").addEventListener("change", async (e) => {
@@ -707,6 +1021,7 @@ async function renderSettings(main) {
     try { await S.tracker.flush(); await S.tracker.remote.backupNow(S.tracker.code); }
     catch (err) { toast(`Import cancelled: couldn't back up your current data first (${err.message})`, "error"); e.target.value = ""; return; }
     S.tracker.replace(doc);
+    restoreFiles();
     toast("Import complete"); await reloadAll();
   });
   $("#import-csv").addEventListener("change", async (e) => {
@@ -777,9 +1092,32 @@ document.addEventListener("click", async (e) => {
   const a = el.dataset.action;
   if (el.tagName === "A") e.preventDefault();
   switch (a) {
-    case "open": return openChapter(id);
+    case "open": if (el.closest(".viewer")) closeViewer(); return openChapter(id);
     case "review": return openReview(id);
     case "learnt": return openReview(id, "learnt");
+    case "open-question": return openQuestion(el.dataset.qid);
+    case "add-question": return openUpload({ chapterId: el.dataset.chapter || S.qFilters.chapter || "" });
+    case "add-files": return openUpload({ questionId: el.dataset.qid, role: el.dataset.role });
+    case "close-viewer": return closeViewer();
+    case "remove-file":
+      if (!confirm("Remove this file?")) return;
+      await guard(async () => { await api("DELETE", `/api/bank/${el.dataset.qid}/files/${el.dataset.file}`); await S.files.remove([el.dataset.file, ...(el.dataset.thumb ? [el.dataset.thumb] : [])]); });
+      return render();
+    case "delete-question": {
+      const q = S.tracker.doc.questions.find((x) => x.id === el.dataset.qid);
+      if (!q || !confirm("Delete this question and its files? Any mistakes linked to it are kept.")) return;
+      await guard(() => api("DELETE", `/api/bank/${q.id}`));
+      closeViewer();
+      S.files.remove(svc.questionFileIds(q)).catch(() => {});
+      toast("Question deleted"); return render();
+    }
+    case "unlink-mistake": await guard(() => api("POST", `/api/mistakes/${id}/unlink`)); return render();
+    case "q-status": await guard(() => api("PATCH", `/api/bank/${el.dataset.qid}`, { status: el.dataset.status })); return render();
+    case "download-files": return downloadAllFiles(el);
+    case "tidy-files": {
+      const n = await guard(async () => { await S.tracker.flush(); return S.files.cleanUp(svc.referencedFileIds(S.tracker.doc)); });
+      toast(n ? `Deleted ${plural(n, "unused file")}` : "Nothing to tidy up"); return loadFileUsage();
+    }
     case "close-drawer": return closeDrawer();
     case "close-modal": return closeModal();
     case "theme": return cycleTheme();
@@ -811,6 +1149,7 @@ document.addEventListener("click", async (e) => {
     case "restore":
       if (!confirm(`Restore your tracker to how it was on ${el.dataset.when}? Your current data is kept as a backup first.`)) return;
       await guard(async () => { await S.tracker.flush(); await S.tracker.remote.restoreBackup(S.tracker.code, Number(el.dataset.backup)); await S.tracker.refresh(); });
+      restoreFiles();
       toast("Backup restored"); return reloadAll();
     case "export-json":
       return download(`revision-tracker-${today()}.json`, JSON.stringify({ ...S.tracker.doc, exported_at: new Date().toISOString() }, null, 1), "application/json");
@@ -822,6 +1161,7 @@ document.addEventListener("click", async (e) => {
     case "logout":
       if (S.tracker.unsaved && !confirm("Some changes haven't saved yet. Log out anyway?")) return;
       if (!confirm("Log out on this device? You'll need your code to open your tracker again.")) return;
+      for (const u of S.urls.values()) URL.revokeObjectURL(u);
       forgetCode(); location.hash = ""; location.reload(); return;
   }
 });
@@ -840,9 +1180,19 @@ document.addEventListener("change", async (e) => {
   if (kind === "status") { await guard(() => api("PATCH", `/api/chapters/${id}`, { [el.dataset.field]: el.value })); el.className = `st-${el.value}`; return softRefresh(id); }
   if (kind === "confidence") { await guard(() => api("PATCH", `/api/chapters/${id}`, { confidence: el.value ? Number(el.value) : null })); return softRefresh(id); }
   if (kind === "first-learnt") {
-    try { await api("PATCH", `/api/chapters/${id}`, { first_learnt: el.value || null }); toast(el.value ? "First learnt date saved" : "Marked as not learnt"); }
+    try { await api("PATCH", `/api/chapters/${id}`, { first_learnt: el.value || null }); toast(el.value ? `First learnt: ${fmtDate(el.value)}` : "Marked as not learnt"); }
     catch (err) { toast(err.message, "error"); }
     return softRefresh(id);
+  }
+  if (kind === "bank-field") {
+    await guard(() => api("PATCH", `/api/bank/${el.dataset.qid}`, { [el.dataset.field]: el.value }));
+    if (el.tagName === "TEXTAREA" || el.tagName === "INPUT") { toast("Saved"); return; }
+    return render();
+  }
+  if (kind === "link-mistake") {
+    if (!el.value) return;
+    await guard(() => api("POST", `/api/bank/${el.dataset.qid}/link`, { mistake_id: el.value }));
+    toast("Mistake linked"); return render();
   }
   if (kind === "notes") { await guard(() => api("PATCH", `/api/chapters/${id}`, { notes: el.value })); toast("Notes saved"); return loadChapters(); }
   if (kind === "retest-date") { await guard(() => api("PATCH", `/api/mistakes/${id}`, { retest_on: el.value || null })); toast("Retest date updated"); return render(); }
@@ -873,7 +1223,7 @@ function highlightSelection(scroll = true) {
 function selectedId() { const r = rows()[S.sel]; return r && r.dataset.id ? r.dataset.id : null; }
 
 function openHelp() {
-  const keys = [["1 – 6", "Go to Due / Chapters / Dashboard / Papers / Mistakes / Settings"], ["j / k or ↓ / ↑", "Move selection"], ["l", "Learnt today (selected chapter)"], ["r", "Reviewed today (selected chapter)"], ["Enter or o", "Open chapter history"], ["1 – 5 then Enter", "Set confidence in the review dialog"], ["/", "Search chapters"], ["n", "New paper attempt / mistake (on those pages)"], ["t", "Toggle dark mode"], ["Esc", "Close dialog / panel"], ["?", "This help"]];
+  const keys = [["1 – 7", "Go to Due / Chapters / Dashboard / Papers / Mistakes / Questions / Settings"], ["j / k or ↓ / ↑", "Move selection"], ["l", "Learnt today (selected chapter)"], ["r", "Reviewed today (selected chapter)"], ["Enter or o", "Open chapter history"], ["1 – 5 then Enter", "Set confidence in the review dialog"], ["/", "Search chapters"], ["n", "New paper attempt / mistake / question (on those pages)"], ["t", "Toggle dark mode"], ["Esc", "Close dialog / panel"], ["?", "This help"]];
   $("#modal-root").innerHTML = `<div class="backdrop modal-backdrop" data-action="close-modal"></div><div class="modal" role="dialog" aria-label="Keyboard shortcuts">
     <button class="ghost close-x" data-action="close-modal" aria-label="Close">✕</button><h2>Keyboard shortcuts</h2>
     <table class="compact shortcuts"><tbody>${keys.map(([k, v]) => `<tr><td><kbd>${k}</kbd></td><td>${v}</td></tr>`).join("")}</tbody></table></div>`;
@@ -883,21 +1233,30 @@ function openHelp() {
 document.addEventListener("keydown", (e) => {
   if (e.key === "Escape") {
     if ($("#modal-root").innerHTML) { closeModal(); e.preventDefault(); return; }
+    if (S.viewerId) { closeViewer(); e.preventDefault(); return; }
     if (S.drawerId) { closeDrawer(); e.preventDefault(); return; }
     if (isTyping(e)) { e.target.blur(); return; }
   }
   if ($("#modal-root").innerHTML) { if (S.modalKeys) S.modalKeys(e); return; }
   if (isTyping(e) || e.metaKey || e.ctrlKey || e.altKey) return;
-  const pages = ["due", "chapters", "dashboard", "papers", "mistakes", "settings"];
-  if (/^[1-6]$/.test(e.key)) { location.hash = `#/${pages[+e.key - 1]}`; e.preventDefault(); return; }
+  if (S.viewerId) return; // the question viewer has its own buttons
+  const pages = ["due", "chapters", "dashboard", "papers", "mistakes", "questions", "settings"];
+  if (/^[1-7]$/.test(e.key)) { location.hash = `#/${pages[+e.key - 1]}`; e.preventDefault(); return; }
   switch (e.key) {
     case "j": case "ArrowDown": if (S.drawerId) return; S.sel++; highlightSelection(); e.preventDefault(); return;
     case "k": case "ArrowUp": if (S.drawerId) return; S.sel--; highlightSelection(); e.preventDefault(); return;
     case "r": { const id = S.drawerId || selectedId(); if (id) { openReview(id); e.preventDefault(); } return; }
     case "l": { const id = S.drawerId || selectedId(); if (id) { openReview(id, "learnt"); e.preventDefault(); } return; }
-    case "Enter": case "o": { if (S.drawerId || e.target.closest("button, a, summary")) return; const id = selectedId(); if (id) { openChapter(id); e.preventDefault(); } return; }
+    case "Enter": case "o": {
+      if (S.drawerId || e.target.closest("button, a, summary")) return;
+      const qid = rows()[S.sel]?.dataset.qid;
+      if (qid) { openQuestion(qid); e.preventDefault(); return; }
+      const id = selectedId(); if (id) { openChapter(id); e.preventDefault(); } return; }
     case "/": if (S.route !== "chapters") { location.hash = "#/chapters"; setTimeout(() => $("#ch-search")?.focus(), 150); } else $("#ch-search").focus(); e.preventDefault(); return;
-    case "n": { const f = $("#paper-form [name=series]") || $("#mistake-form [name=chapter_id]"); if (f) { f.focus(); e.preventDefault(); } return; }
+    case "n": {
+      if (S.route === "questions") { openUpload({ chapterId: S.qFilters.chapter }); e.preventDefault(); return; }
+      const f = $("#paper-form [name=series]") || $("#mistake-form [name=chapter_id]"); if (f) { f.focus(); e.preventDefault(); } return;
+    }
     case "t": cycleTheme(); return;
     case "?": openHelp(); return;
   }
@@ -941,6 +1300,7 @@ async function openTracker(code, keep) {
   });
   await tracker.open();
   S.tracker = tracker;
+  S.files = new FileStore(tracker.remote, tracker.code);
   rememberCode(tracker.code, keep);
   $("#login").hidden = true;
   $(".shell").hidden = false;
